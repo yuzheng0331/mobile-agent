@@ -1,0 +1,138 @@
+package dev.phoneagent.core
+
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/** Scripted phone: each action moves to the next frame; settling advances the clock. */
+private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: Boolean = true) : Device {
+    private val frames = frames.toList()
+    private var current = 0
+    private var now = 0L
+    val actions = mutableListOf<String>()
+
+    override fun capture(displayId: Int) = frames[current]
+    override fun launch(packageName: String) = act("launch $packageName")
+    override fun press(target: Target, long: Boolean) = act(if (long) "long" else "tap")
+    override fun back() = act("back")
+    override fun nowMs() = now
+    override fun awaitSettle(timeoutMs: Long): Boolean {
+        now += minOf(300, timeoutMs)
+        return true
+    }
+
+    private fun act(name: String): Boolean {
+        actions += name
+        if (actionsChangeScreen && current < frames.lastIndex) current++
+        return true
+    }
+}
+
+private fun row(top: Int, label: String, long: Boolean = false) = UiNode(
+    bounds = Box(0, top, 1080, top + 150),
+    clickable = !long,
+    longClickable = long,
+    children = listOf(UiNode(text = label)),
+)
+
+private fun frame(pkg: String, vararg nodes: UiNode) = Frame(pkg, UiNode(children = nodes.toList()))
+
+private val QQ = "com.tencent.mobileqq"
+private val qqList = frame(QQ, UiNode(desc = "搜索"),
+    UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2200), children = listOf(row(400, "会话B"), row(250, "会话A"))))
+private val qqChat = frame(QQ, UiNode(desc = "聊天设置"),
+    UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000),
+        children = listOf(row(300, "旧消息", long = true), row(900, "最新消息", long = true))))
+private val qqMenu = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "复制", clickable = true))
+private val douyin = frame("com.ss.android.ugc.aweme")
+
+private fun pack(steps: String, requires: String = """["$QQ"]""") =
+    Packs.parse("""{"schemaVersion":1,"id":"t","requires":$requires,"steps":$steps}""")
+
+class CoreTest {
+    private val qqPack = Packs.parse(File("../packs/qq-latest-to-douyin.json").readText())
+
+    @Test
+    fun `shipped packs validate`() {
+        File("../packs").listFiles { f -> f.extension == "json" }!!.forEach {
+            assertEquals(emptyList(), validate(Packs.parse(it.readText())), it.name)
+        }
+    }
+
+    @Test
+    fun `qq pack runs end to end on scripted frames`() {
+        val device = FakeDevice(douyin, qqList, qqChat, qqMenu, qqChat, douyin)
+        val result = Runner(device).run(qqPack)
+        assertTrue(result.ok, result.reason)
+        assertEquals(listOf("launch $QQ", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
+        // listItem 0 is the topmost row, -1 the bottom-most message
+        assertEquals(250, result.steps[1].bounds!!.top)
+        assertEquals(900, result.steps[2].bounds!!.top)
+    }
+
+    @Test
+    fun `missing target waits out the timeout then stops with the pack's reason`() {
+        val device = FakeDevice(qqChat)
+        val result = Runner(device).run(
+            pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"ifMissing":"不是文字","timeoutMs":1000}]"""),
+        )
+        assertEquals(Outcome.MISSING, result.steps.single().outcome)
+        assertTrue(result.reason!!.endsWith("不是文字"))
+        assertTrue(device.nowMs() >= 1000)
+        assertEquals(emptyList(), device.actions)
+    }
+
+    @Test
+    fun `no effect retries only up to maxRetry`() {
+        val device = FakeDevice(qqMenu, actionsChangeScreen = false)
+        val result = Runner(device).run(
+            pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"expect":{"gone":["复制"]},"maxRetry":1,"timeoutMs":600}]"""),
+        )
+        assertEquals(Outcome.NO_EFFECT, result.steps.single().outcome)
+        assertEquals(2, result.steps.single().attempts)
+        assertEquals(listOf("tap", "tap"), device.actions)
+    }
+
+    @Test
+    fun `never touches an app the pack does not require`() {
+        val device = FakeDevice(frame("com.example.other", UiNode(text = "复制", clickable = true)))
+        val result = Runner(device).run(
+            pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"timeoutMs":600}]"""),
+        )
+        assertEquals(Outcome.WRONG_APP, result.steps.single().outcome)
+        assertEquals(emptyList(), device.actions)
+    }
+
+    @Test
+    fun `validator rejects unknown names, bad arguments and stray launches`() {
+        val problems = validate(
+            pack(
+                """[{"do":"swipe"},
+                   {"do":"tap","target":{"intent":"x","find":[{"magic":1}]}},
+                   {"do":"tap","target":{"intent":"x","find":[{"text":["not","a","string"]}]}},
+                   {"do":"back","expect":{"anyText":"not a list"}},
+                   {"do":"launch","app":"com.example"}]""",
+            ),
+        )
+        assertEquals(5, problems.size, problems.joinToString("\n"))
+    }
+
+    @Test
+    fun `router picks the pack an alias names and refuses to guess`() {
+        assertEquals("qq-latest-to-douyin", route("帮我复制 QQ 最新消息！", listOf(qqPack))?.id)
+        assertNull(route("打开微信", listOf(qqPack)))
+        assertNull(route("", listOf(qqPack)))
+    }
+
+    @Test
+    fun `frame runs OCR once per region`() {
+        var calls = 0
+        val frame = Frame("p", null, recognizer = { calls++; listOf(TextHit("复制", Box(0, 0, 1, 1), 0.9f)) })
+        frame.ocr(Box(0, 0, 10, 10))
+        frame.ocr(Box(0, 0, 10, 10))
+        frame.ocr()
+        assertEquals(2, calls)
+    }
+}

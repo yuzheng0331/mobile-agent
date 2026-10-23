@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Phone Agent</string>
+    <string name="service_description">按你选择的任务包操作指定的几个 App：读取界面结构、点击、长按、返回。不联网，界面内容不保存。</string>
+</resources>

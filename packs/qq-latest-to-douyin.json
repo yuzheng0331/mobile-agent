@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "qq-latest-to-douyin",
+  "version": "0.1.0",
+  "author": "phone-agent",
+  "aliases": ["复制QQ最新消息", "QQ最新消息然后开抖音"],
+  "requires": ["com.tencent.mobileqq", "com.ss.android.ugc.aweme"],
+  "steps": [
+    {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["搜索"]}},
+    {"do": "tap",
+     "target": {"intent": "会话列表第一行", "find": [{"listItem": 0}]},
+     "expect": {"anyText": ["聊天设置"]}},
+    {"do": "long",
+     "target": {"intent": "聊天区最下面一条消息", "find": [{"listItem": -1}]},
+     "expect": {"anyText": ["复制"]},
+     "ifMissing": "聊天里没有消息"},
+    {"do": "tap",
+     "target": {"intent": "复制", "find": [{"text": "复制"}]},
+     "expect": {"gone": ["复制"]},
+     "ifMissing": "最新消息不是文字（图片、视频或语音），不能复制"},
+    {"do": "launch", "app": "com.ss.android.ugc.aweme"}
+  ]
+}

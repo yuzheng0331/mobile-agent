@@ -126,7 +126,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 **交互的两层：**
 
-- **core 里的 `RunObserver` 接口**：`onStep(trace)` 报告进度；`onStuck(step, reason)` 在卡住时返回用户的选择（教我＋坐标 / 跳过 / 停止）。补教、跳过、“补教后整个任务成功就保存为本机变体”都在这一层，用脚本化的测试覆盖。界面只负责把它画出来。`onStep` 在 M1 做（替换 `MainActivity` 里跑完才拼接耗时的做法）；`onStuck` 和补教在 M4。
+- **core 里的 `RunObserver` 接口**：`onStep(trace)` 报告进度；`onStuck(step, reason)` 在卡住时返回用户的选择（教我＋坐标 / 跳过 / 停止）。补教、跳过、“补教后整个任务成功就保存为本机变体”都在这一层，用脚本化的测试覆盖。界面只负责把它画出来。`onStep` 已实现（`MainActivity` 每完成一步就刷新耗时）；`onStuck` 和补教在 M4。
 - **悬浮面板**（M4）：任务运行时目标 App 在前台，我们的 Activity 被挡住，所以运行清单和三个按钮放在悬浮于目标 App 之上的小面板里。面板由无障碍服务创建叠加窗口（`TYPE_ACCESSIBILITY_OVERLAY`），不需要另外申请悬浮窗权限。“教我这一步”就是在面板上让用户点一下屏幕位置。面板同时标出 Agent 将要点的位置，用户随时能看见、随时能停。
 
 微信步骤的感知：截图 → 按版面规则裁出区域（列表第一行、聊天区最后一个气泡）→ OCR → 得到文字和位置。截图和 OCR 结果只放内存，步骤结束就丢弃。
@@ -161,12 +161,12 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 | 里程碑 | 内容 | 完成标准 |
 |---|---|---|
-| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id`、`RunObserver.onStep` | QQ 任务真机 20 次 ≥ 95% |
+| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id` | QQ 任务真机 20 次 ≥ 95% |
 | M2 | 夸克任务 | 同上 |
 | M3 | 微信任务（截图 + OCR + 版面）：`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
 | M4 | 一句话路由接进界面、运行清单 UI 与悬浮面板、`RunObserver.onStuck` 与补教、`PackSource`、安装引导与体检 | 朋友独立装好并跑通三个任务 |
 
-v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包；不在首屏时返回最多 3 次；内置包 id 查重（`shipped packs validate`）。
+v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包；不在首屏时返回最多 3 次；内置包 id 查重（`shipped packs validate`）；`RunObserver.onStep`。
 
 ## 10. 未决与风险
 

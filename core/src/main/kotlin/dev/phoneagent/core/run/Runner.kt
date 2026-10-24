@@ -36,13 +36,23 @@ data class RunResult(val packId: String, val steps: List<StepTrace>, val reason:
  * the UI settles, check the expectation. "Still loading" waits without using up a
  * retry; "no effect" retries the action, but only if the target is still there.
  */
-class Runner(private val device: Device, private val registry: Registry = Builtins.registry) {
+/** Hears about a run while it goes, so the UI can draw progress. `onStuck` (teach / skip / stop) joins in M4. */
+fun interface RunObserver {
+    fun onStep(trace: StepTrace)
+}
+
+class Runner(
+    private val device: Device,
+    private val registry: Registry = Builtins.registry,
+    private val observer: RunObserver = RunObserver {},
+) {
 
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
         for ((index, step) in pack.steps.withIndex()) {
             val trace = runStep(index, step, pack.requires)
             traces += trace
+            observer.onStep(trace)
             if (trace.outcome != Outcome.SUCCESS) return RunResult(pack.id, traces, reason(index, step, trace.outcome))
         }
         return RunResult(pack.id, traces, null)

@@ -12,6 +12,7 @@ import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Packs
 import dev.phoneagent.core.pack.validate
 import dev.phoneagent.core.run.Runner
+import dev.phoneagent.core.run.StepTrace
 import java.util.concurrent.Executors
 
 /** Bundled packs with a run button each, plus a link to the accessibility settings. */
@@ -57,13 +58,17 @@ class MainActivity : Activity() {
         val device = AgentService.instance ?: return run { status.text = "请先开启无障碍服务" }
         status.text = "运行中：${pack.id}"
         worker.execute {
-            val result = Runner(device).run(pack)
-            val timing = result.steps.joinToString("\n") {
-                "第 ${it.index + 1} 步 ${it.action}：找 ${it.findMs} / 动 ${it.actMs} / 等 ${it.settleMs} / 查 ${it.checkMs} ms，${it.outcome}"
-            }
-            runOnUiThread { status.text = (result.reason ?: "完成") + "\n" + timing }
+            val lines = mutableListOf<String>()
+            val result = Runner(device, observer = { trace ->
+                val line = timing(trace)
+                runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
+            }).run(pack)
+            runOnUiThread { status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n") }
         }
     }
+
+    private fun timing(it: StepTrace) =
+        "第 ${it.index + 1} 步 ${it.action}：找 ${it.findMs} / 动 ${it.actMs} / 等 ${it.settleMs} / 查 ${it.checkMs} ms，${it.outcome}"
 
     /** Every `*.json` asset, parsed and validated; a broken pack shows its problems instead of a button. */
     private fun loadPacks(): List<Triple<String, Pack?, List<String>>> =

@@ -8,6 +8,7 @@ import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Outcome
 import dev.phoneagent.core.run.Runner
+import dev.phoneagent.core.run.StepTrace
 import dev.phoneagent.core.run.Target
 import dev.phoneagent.core.run.TextHit
 import dev.phoneagent.core.run.TextRecognizer
@@ -89,8 +90,10 @@ class CoreTest {
     @Test
     fun `qq pack runs end to end on scripted frames`() {
         val device = FakeDevice(douyin, qqList, qqChat, qqMenu, qqChat, douyin)
-        val result = Runner(device).run(qqPack)
+        val seen = mutableListOf<StepTrace>()
+        val result = Runner(device, observer = { seen += it }).run(qqPack)
         assertTrue(result.ok, result.reason)
+        assertEquals(result.steps, seen)
         assertEquals(listOf("launch $QQ", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
         // listItem 0 is the topmost row, -1 the bottom-most message
         assertEquals(250, result.steps[1].bounds!!.top)

@@ -58,7 +58,10 @@ docs/    架构文档、BetterGI / OneDragon 调研（以后压低延迟时要�
 - 只操作任务包 `requires` 里的 App；前台换成别的 App 就停下（`Outcome.WRONG_APP`）。
 - 界面树、截图、OCR 文字只在内存里，一轮结束就丢；轨迹只有结构和耗时。
 - 动作集不含输入与发送。
+- 任务包只是数据：只能引用 `Builtins.registry` 里按名字注册的找法、预期和动作，未知名字由 `validate` 拒收；不做运行时代码插件和脚本引擎。
 
 ## 下一步（M1）
 
 用 `tools/probe` 在 QQ 上抓会话列表和聊天界面，校准 `listItem` 的规则（列表容器、哪些行算条目、怎么跳过时间分隔条），把脱敏后的界面树放进 `core` 测试夹具，然后在真机上连续跑 20 次。
+
+M1 里还要做的代码改动（见架构文档第 9 节）：`core` 拆成 `pack/ run/ route/ ext/` 子包（之后更新上面的结构图）、抽出 `Perception` 接口并给 `Frame` 加 `id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重。

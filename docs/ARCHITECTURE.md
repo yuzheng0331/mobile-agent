@@ -1,6 +1,6 @@
 # 手机端自动化 Agent v1 架构
 
-状态：草案（2026-10-23）。以第 0–3 关的实测为依据；标“建议”的是 Agent 的提议，等你确认。新仓库建好后，本文移到新仓库的 `docs/`。
+状态：骨架 v0.1（2026-10-24）。以第 0–3 关的实测为依据；标“建议”的是 Agent 的提议，等你确认。标“M1”“M3”“M4”的是计划在对应里程碑做、现在代码里还没有的部分；标“待真机定”的等 QQ 真机结果再决定。
 
 ## 1. v1 做什么、不做什么
 
@@ -26,78 +26,92 @@
 | 启动 | 按包名 Intent 启动小红书、抖音成功；**应用分身启动失败** | 用 Intent 启动；v1 不支持分身 |
 | 复制确认 | 微信复制有 toast“已复制”；QQ 没有 | 微信用 toast 确认；QQ 用“菜单关闭且无错误”弱确认 |
 | 保活 | 打开“后台高耗电”后服务稳定 | 写进安装引导 |
-| 开发能力 | 构建、安装、调试已走通（`spikes/a11y_probe`） | 用 Kotlin，探针代码可直接迁移 |
+| 开发能力 | 构建、安装、调试已走通（`D:\gui-agent\spikes\a11y_probe`，不在本仓库） | 用 Kotlin，探针代码可直接迁移 |
 | 系统版本 | Neo5 当前 Android 13 | minSdk 30，13 起侧载应用要“允许受限设置” |
 
 ## 3. 结构
 
 两个 Gradle 模块，加任务包和小工具。不另起框架。
 
+现状（v0.1）：`core` 是一个平铺的包 `dev.phoneagent.core`，文件为 `Frame.kt` `Device.kt` `Pack.kt` `Registry.kt` `Builtins.kt` `Validator.kt` `Runner.kt` `Router.kt`（各文件职责见 README）。M1 内按下面的目标结构拆成子包（见决定记录）：
+
 ```
 core/    纯 Kotlin（JVM 单测，秒级）
-  pack/        任务包数据类 + JSON 解析与校验（kotlinx.serialization）
-  run/         解释器：逐步执行、找目标、等稳定、检查预期、失败停下
-  route/       一句话 → 任务（别名匹配）
-  Screen.kt    接口：读树、截图+OCR、点、长按、返回、启动 App、读 toast
+  pack/        任务包数据类 + JSON 解析与校验（kotlinx.serialization）：Pack.kt、Validator.kt
+  run/         解释器：逐步执行、找目标、等稳定、检查预期、失败停下：Runner.kt、Device.kt、Frame.kt
+  route/       一句话 → 任务（别名匹配）：Router.kt
+  ext/         扩展点注册表和 v1 内置实现：Registry.kt、Builtins.kt
 
 app/     Android
-  ProbeService 演进来的 AgentService（AccessibilityService，实现 core 的 Screen 接口）
-  Ocr.kt       onnxruntime-android + PP-OCR det/rec（从 OcrBench.kt 迁移）
-  ui/          任务列表、运行清单（每步状态 + 补教/跳过/停止）、安装引导
+  AgentService （AccessibilityService，由探针的 ProbeService 演进而来，实现 core 的 Device 接口）
+  MainActivity 任务列表（v0.1：每个任务包一个按钮，跑完显示原因和每步耗时）
+  Ocr.kt       onnxruntime-android + PP-OCR det/rec（从 OcrBench.kt 迁移）——M3
+  ui/          运行清单（每步状态 + 补教/跳过/停止）、安装引导——M4
 
-packs/   官方任务包 JSON（v1 三个）
-tools/   probe.py（抓树/截图/对比）、任务包校验脚本
+packs/   官方任务包 JSON（v1 三个；现在只有 QQ 的草稿）
+tools/   probe/probe.py（抓树/截图/对比）
 ```
+
+`Device` 接口：`capture`（取一帧）、`launch`、`press`（点 / 长按）、`back`、`awaitSettle`（等稳定）、`nowMs`。它不只是“屏幕”，还管启动、返回和等待，所以不叫 `Screen`（见决定记录）。
+
+任务包校验不另写脚本：`core` 的测试 `shipped packs validate` 校验 `packs/` 里的每个文件，`.githooks/pre-push` 在推送前跑 `:core:test`。
 
 `core` 不依赖 Android，这样解释器、匹配、任务包校验都能用录下来的界面树在电脑上测。
 
 ### 扩展点
 
-依据 `spikes/research/bettergi-speed-and-plugins.md` 与 `onedragon-speed-and-plugins.md`。两个项目的可插拔都是“**代码封闭、数据开放**”：社区贡献的是数据（识别配置、YAML/JSON 策略），数据只能引用代码里已注册的名字。v1 照此办理：**任务包只能是数据；扩展点是 `core/ext/` 里按名字注册的实现，编译期注册，未知名字在加载任务包时就拒收**。不做运行时代码插件、脚本引擎，不动态加载 dex。
+依据 `docs/research/bettergi-speed-and-plugins.md` 与 `docs/research/onedragon-speed-and-plugins.md`。两个项目的可插拔都是“**代码封闭、数据开放**”：社区贡献的是数据（识别配置、YAML/JSON 策略），数据只能引用代码里已注册的名字。v1 照此办理：**任务包只能是数据；扩展点是按名字注册的实现（现在是 `Builtins.registry`，拆子包后放在 `core/ext/`），编译期注册，未知名字在加载任务包时由 `validate` 拒收**。不做运行时代码插件、脚本引擎，不动态加载 dex。
 
-| 扩展点 | 形态 | v1 内置 | 何时需要 |
+| 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
-| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | M1 |
-| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；统一支持可选 `region`（比例矩形）与 `under`（相对锚点） | `text` `desc` `id` `listItem` `lastMessage` `ocrText`；预留 `template` | M1（`ocrText`、`region` 在 M3 前补齐） |
-| `Expectation` 注册表 | 同上 | `anyText` `gone` `toast`；`screen` 在加 `ScreenDef` 时一起加 | M1 |
-| `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | M1 |
+| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。M1 抽出 `Perception` 接口和 `TreePerception`，给 `Frame` 加 `id`；`ScreenshotOcrPerception` 在 M3 |
+| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc` `id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数） | “最后一条消息”现在用 `listItem: -1`（临时，见决定记录）；是否单独做 `lastMessage`、锚点叫 `in` 还是 `under`——待真机定。`ocrText`、`region` 在 M3；预留 `template` |
+| `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
+| `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |
 | `ScreenDef`（可选） | `id`、`app`、`marks`（若干 Finder，全部命中才算这个画面），只在前台包名匹配的画面里判定；预留 `goto` 字段，不做路由 | — | M3 前 |
-| `PackSource` | 内置包（assets）、签名下载包、本地补教补丁（只能改坐标）。官方包 id 唯一，冲突时先注册者胜并告警 | 内置 + 补丁；签名下载在做更新渠道时加 | M1 |
-| `Trace` | 每步记录 找 / 动 / 等 / 查 四段耗时和结果码，不含界面内容 | — | M1 |
+| `PackSource` | 内置包（assets）、签名下载包、本地补教补丁（只能改坐标）。官方包 id 唯一，冲突时先注册者胜并告警 | 内置 + 补丁；签名下载在做更新渠道时加 | M4（和补教一起做）。现在 `MainActivity` 直接读 assets；M1 只在 `shipped packs validate` 里加一条检查：内置包 id 不能重复 |
+| `Trace` | 每步记录 找 / 动 / 等 / 查 四段耗时和结果码，不含界面内容 | `StepTrace`（另含命中的找法序号、目标边界、尝试次数） | 已有 |
 
 ## 4. 任务包格式
 
 一个任务 = 若干步，每步写“做什么、怎么找、做完该看到什么”。找法按顺序尝试，前一个找不到才用下一个。
 
+下面是仓库里真实的 `packs/qq-latest-to-douyin.json`（草稿，列表规则还没在真实 QQ 界面上校准）：
+
 ```json
 {
-  "id": "qq-copy-latest-then-douyin",
+  "schemaVersion": 1,
+  "id": "qq-latest-to-douyin",
+  "version": "0.1.0",
+  "author": "phone-agent",
   "aliases": ["复制QQ最新消息", "QQ最新消息然后开抖音"],
   "requires": ["com.tencent.mobileqq", "com.ss.android.ugc.aweme"],
   "steps": [
-    {"do": "launch", "app": "com.tencent.mobileqq"},
-    {"do": "tap", "target": {"intent": "会话列表第一行",
-       "find": [{"listItem": 0, "under": {"desc": "搜索"}}]},
+    {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["搜索"]}},
+    {"do": "tap",
+     "target": {"intent": "会话列表第一行", "find": [{"listItem": 0}]},
      "expect": {"anyText": ["聊天设置"]}},
-    {"do": "long", "target": {"intent": "最后一条消息",
-       "find": [{"lastMessage": true}]},
-     "expect": {"anyText": ["复制"]}},
-    {"do": "tap", "target": {"intent": "复制", "find": [{"text": "复制"}]},
+    {"do": "long",
+     "target": {"intent": "聊天区最下面一条消息", "find": [{"listItem": -1}]},
+     "expect": {"anyText": ["复制"]},
+     "ifMissing": "聊天里没有消息"},
+    {"do": "tap",
+     "target": {"intent": "复制", "find": [{"text": "复制"}]},
      "expect": {"gone": ["复制"]},
-     "ifMissing": "最新消息不是文字（图片/视频/语音），不能复制"},
+     "ifMissing": "最新消息不是文字（图片、视频或语音），不能复制"},
     {"do": "launch", "app": "com.ss.android.ugc.aweme"}
   ]
 }
 ```
 
-- **找法种类**（v1 只做需要的）：`text`、`desc`、`id`、`listItem`（容器里第 N 项）、`lastMessage`（聊天区最下面一条消息气泡）、`ocrText`（截图识别出的文字，微信用）。坐标只作为补教结果存在本地，不写进官方包。
+- **找法种类**（v1 只做需要的）：已有 `text`、`desc`、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。“聊天区最下面一条消息气泡”现在用 `listItem: -1` 表示；是否另做 `lastMessage`（能跳过时间分隔条、系统提示）待真机定。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
 - **预期**：`anyText`（界面上出现某些文字之一）、`gone`（某文字消失）、`toast`（出现指定提示）。微信步骤的预期用 OCR 文字判断。
 - **`ifMissing`**：找不到目标时给用户看的人话原因，而不是笼统的“失败”。
-- **包头字段**：`schemaVersion`、`version`、`author`、`needs`（如 `["ocr"]`）、`testedWith`（如 `{"com.tencent.mm": "8.0.x"}`）。App 不认识的 `schemaVersion` 或缺少 `needs` 里的能力时，加载就拒收，不会跑到一半才失败。补教补丁记下当时的目标 App 版本，版本一变就提示“补丁可能失效”。
-- **每步可选**：`timeoutMs`、`maxRetry`（都有默认值）。`ocrText` 可带 `region`（屏幕比例矩形 `[x, y, w, h]`）；区域位置已知、只有一行字时用 `mode: "rec"`，跳过检测、只跑识别。
-- `listItem`、`lastMessage` 的具体规则（容器怎么认、跳过时间分隔条和系统提示）在实现 QQ 任务时按实际界面树定，微信版本按截图版面定。（建议）
+- **包头字段**：`schemaVersion`（必填，现在是 1）、`version`、`author`、`needs`（如 `["ocr"]`）、`testedWith`（如 `{"com.tencent.mm": "8.0.x"}`）。App 不认识的 `schemaVersion` 或缺少 `needs` 里的能力时，加载就拒收，不会跑到一半才失败。解析是严格的：不认识的字段直接报错。补教补丁记下当时的目标 App 版本，版本一变就提示“补丁可能失效”。
+- **每步可选**：`timeoutMs`（默认 5000）、`maxRetry`（默认 1）。`ocrText` 可带 `region`（屏幕比例矩形 `[x, y, w, h]`）；区域位置已知、只有一行字时用 `mode: "rec"`，跳过检测、只跑识别（M3）。
+- `listItem` 的具体规则（容器怎么认、哪些行算条目、怎么跳过时间分隔条和系统提示）在实现 QQ 任务时按实际界面树定，微信版本按截图版面定。现在的实现只取容器的直接子节点里可点或可长按的那些，按上边缘排序。（建议，待真机定）
 
-不做：画面路由图、多版本变体、参数槽。三个任务都从“启动 App”开始，启动后的首屏就是固定起点；遇到不在预期首屏的情况（例如停在某个聊天里），v1 先按返回键回到列表，最多 3 次，仍不对就停下。
+不做：画面路由图、多版本变体、参数槽。三个任务都从“启动 App”开始，启动后的首屏就是固定起点；遇到不在预期首屏的情况（例如停在某个聊天里），v1 先按返回键回到列表，最多 3 次，仍不对就停下。这条 M1 实现（用已有的 `back` 动作，不扩大动作集），现在还没有：QQ 停在某个聊天里时，会在第 1 步的 `anyText: 搜索` 检查上停下。
 
 ## 5. 运行时
 
@@ -105,14 +119,15 @@ tools/   probe.py（抓树/截图/对比）、任务包校验脚本
 
 1. **找目标**：按 `find` 顺序找，代价从低到高：界面树 → 区域 OCR（位置已知时只识别）→ 整屏 OCR。整屏 OCR 时检测不缩小输入（桌面端实测，长边缩到 960 会让小字召回明显下降；OneDragon 用 960 没问题，是因为它送进去的几乎都是裁好的小区域）。找不到就等界面事件后重找，直到 `timeoutMs`（默认 5 s）。
 2. **动作**：优先 `performAction`（CLICK / LONG_CLICK）；目标不可点时退回手势（按控件中心点）。
-3. **等稳定**：动作后等到出现界面变化事件，并且 300 ms 内没有新事件（探针里的 `waitForSettle`），上限 5 s。不写固定 sleep。
-4. **查预期**：读树（或截图 OCR）检查 `expect`。每一轮的结果分四种：成功；**等待**（界面还在变、还在加载，不计重试次数，只受时间上限约束）；**重试**（点了没反应，计次数，最多 `maxRetry` 次）；失败。重做动作前先重新感知一次，确认确实还停在原处才重做，避免长按菜单这类操作被触发两次。
-5. **停下时**：运行清单标出这一步和原因，给三个选项：**教我这一步**（用户点一下正确位置，存为本地补丁，只对这台手机、这个 App 版本生效）、**跳过**、**停止**。
+3. **等稳定**：动作后等到出现界面变化事件，并且 300 ms 内没有新事件（`Device.awaitSettle`，来自探针里的 `waitForSettle`），上限是该步的 `timeoutMs`。不写固定 sleep。
+   现状：`AgentService.awaitSettle` 从调用时刻起算 300 ms 静默，**动作没有触发任何事件时也会在 300 ms 后返回**，靠后面的“查预期”兜底。是否改成“必须先出现事件再算静默”，待真机定（看每步“等”的耗时和失败原因）。
+4. **查预期**：读树（或截图 OCR）检查 `expect`。每一轮的结果分四种：成功；**等待**（界面还在变、还在加载，不计重试次数，只受时间上限约束）；**重试**（点了没反应，计次数，最多 `maxRetry` 次）；失败。重做动作前先重新感知一次，确认确实还停在原处才重做，避免长按菜单这类操作被触发两次。代码里失败分为 `Outcome.MISSING`（找不到目标）、`WRONG_APP`（前台不是 `requires` 里的 App）、`NO_EFFECT`（动作后没出现预期）、`ACTION_FAILED`（动作没执行成功）。
+5. **停下时**：运行清单标出这一步和原因，给三个选项：**教我这一步**（用户点一下正确位置，存为本地补丁，只对这台手机、这个 App 版本生效）、**跳过**、**停止**（M4）。v0.1 只在跑完后由 `MainActivity` 显示停止原因和每步耗时。
 
 **交互的两层：**
 
-- **core 里的 `RunObserver` 接口**：`onStep(trace)` 报告进度；`onStuck(step, reason)` 在卡住时返回用户的选择（教我＋坐标 / 跳过 / 停止）。补教、跳过、“补教后整个任务成功就保存为本机变体”都在这一层，用脚本化的测试覆盖。界面只负责把它画出来。
-- **悬浮面板**：任务运行时目标 App 在前台，我们的 Activity 被挡住，所以运行清单和三个按钮放在悬浮于目标 App 之上的小面板里。面板由无障碍服务创建叠加窗口（`TYPE_ACCESSIBILITY_OVERLAY`），不需要另外申请悬浮窗权限。“教我这一步”就是在面板上让用户点一下屏幕位置。面板同时标出 Agent 将要点的位置，用户随时能看见、随时能停。
+- **core 里的 `RunObserver` 接口**：`onStep(trace)` 报告进度；`onStuck(step, reason)` 在卡住时返回用户的选择（教我＋坐标 / 跳过 / 停止）。补教、跳过、“补教后整个任务成功就保存为本机变体”都在这一层，用脚本化的测试覆盖。界面只负责把它画出来。`onStep` 在 M1 做（替换 `MainActivity` 里跑完才拼接耗时的做法）；`onStuck` 和补教在 M4。
+- **悬浮面板**（M4）：任务运行时目标 App 在前台，我们的 Activity 被挡住，所以运行清单和三个按钮放在悬浮于目标 App 之上的小面板里。面板由无障碍服务创建叠加窗口（`TYPE_ACCESSIBILITY_OVERLAY`），不需要另外申请悬浮窗权限。“教我这一步”就是在面板上让用户点一下屏幕位置。面板同时标出 Agent 将要点的位置，用户随时能看见、随时能停。
 
 微信步骤的感知：截图 → 按版面规则裁出区域（列表第一行、聊天区最后一个气泡）→ OCR → 得到文字和位置。截图和 OCR 结果只放内存，步骤结束就丢弃。
 
@@ -138,7 +153,7 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 ## 8. 测试
 
-- **core 单测**：用录下的界面树做夹具，测找法、预期判断、任务包校验。`spikes/phone_probe/out/` 里的树含真实聊天内容，**进仓库前必须脱敏**（替换昵称和消息文字）。
+- **core 单测**：用录下的界面树做夹具，测找法、预期判断、任务包校验。现在的夹具是 `CoreTest.kt` 里手写的帧，由 `FakeDevice` 按“动作 → 下一帧”的脚本返回；第一份脱敏的 QQ 界面树进来时再建 `fixtures/<app>/<screen>/<state>` 目录。`tools/probe/out/` 里的树含真实聊天内容，**进仓库前必须脱敏**（替换昵称和消息文字）。
 - **真机回归**：每个任务连续 20 次，记录成功率和每步耗时；Neo5 加一台其他品牌手机。
 - **安装测试**：找一个朋友按引导从零安装。
 
@@ -146,10 +161,12 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 | 里程碑 | 内容 | 完成标准 |
 |---|---|---|
-| M1 | 新仓库；`core` 的任务包解析、解释器、`Screen` 接口；`app` 的 AgentService；QQ 任务跑通 | QQ 任务真机 20 次 ≥ 95% |
+| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`core` 拆子包、`Perception` 接口和 `Frame.id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重 | QQ 任务真机 20 次 ≥ 95% |
 | M2 | 夸克任务 | 同上 |
-| M3 | 微信任务（截图 + OCR + 版面） | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
-| M4 | 一句话路由、运行清单 UI、补教、安装引导与体检 | 朋友独立装好并跑通三个任务 |
+| M3 | 微信任务（截图 + OCR + 版面）：`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
+| M4 | 一句话路由接进界面、运行清单 UI 与悬浮面板、`RunObserver.onStuck` 与补教、`PackSource`、安装引导与体检 | 朋友独立装好并跑通三个任务 |
+
+v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。
 
 ## 10. 未决与风险
 
@@ -160,7 +177,7 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 - **微信 OCR 精度**：需要更多截图，M3 开始前先采一批（覆盖文字、图片、语音、表情、撤回、时间分隔条），统计准确率。
 - **骨架的可插拔程度（已按调研定）**：见第 3 节“扩展点”。运行时代码插件、脚本引擎、后台监视器（用来自动关掉更新、权限弹窗）、路由图、模板匹配、截图上的区域编辑工具，都放到 v1 之后，届时逐项单独评估。
 - **`takeScreenshot` 的最小调用间隔**：系统强制有下限，调得太快会报错，具体值要在 Neo5 上实测。它决定微信步骤“找不到就重找”的最短间隔；M3 之前测出来。
-- **测试夹具**：按 `fixtures/<app>/<screen>/<state>` 存脱敏后的树和截图；`core` 里做一个 `FakeScreen`，按“动作 → 下一帧”的脚本返回画面。每步的每个分支都要有用例，会进入等待的步骤要有多帧用例（照 OneDragon 的测试判据）。
+- **测试夹具**：按 `fixtures/<app>/<screen>/<state>` 存脱敏后的树和截图（第一份 QQ 界面树进来时建）；`CoreTest.kt` 里的 `FakeDevice` 按“动作 → 下一帧”的脚本返回画面。每步的每个分支都要有用例，会进入等待的步骤要有多帧用例（照 OneDragon 的测试判据）。
 
 ## 决定记录
 
@@ -182,6 +199,10 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 | v1 不做画面路由图和参数槽 | 建议（三个任务用不到） |
 | 运行时用悬浮面板展示进度与补教 / 跳过 / 停止；交互逻辑放 core 的 `RunObserver` | 用户 |
 | M1–M3 用普通 View；M4 做正式界面时学 Jetpack Compose（只影响 `app` 的界面层，不碰 core） | 用户 |
+| `core` 的设备接口叫 `Device`，不叫 `Screen`：它还管启动 App、返回、等稳定 | 用户（2026-10-24 校准） |
+| `core` 在 M1 内拆成 `pack/ run/ route/ ext/` 子包；M1 就抽出 `Perception` 接口，给 `Frame` 加 `id` | 用户（2026-10-24 校准） |
+| `PackSource` 推到 M4，和补教一起做；M1 只检查内置包 id 不重复 | 用户（2026-10-24 校准） |
+| “聊天区最下面一条消息”暂用 `listItem: -1`（临时）；是否另做 `lastMessage`、锚点叫 `in` 还是 `under`，等 QQ 真机界面树再定 | 用户（2026-10-24 校准） |
 
 ## 11. 现在就留好接口、以后再做的事
 
@@ -190,7 +211,7 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 | **可回放轨迹** | 每次运行生成一份轨迹：每步命中了哪个找法、目标的边界和类型、四段耗时、每轮结果，以及前后画面的结构指纹（树结构哈希，不含文字）。只存在本机；补教成功后保存的任务包变体附带这份轨迹 | 学习模式用轨迹做优化：把总是第二个才命中的找法提到前面、收紧超时、推断出可以跳过的等待 |
 | **压缩感知时间** | 预期已经是声明式的（`expect`），解释器只要“预期满足”就进入下一步 | 用后置谓词判断动作是否生效，替代“等界面静默”：谓词一满足立即进入下一步；再加上轨迹里学到的典型耗时，目标是接近人的操作速度 |
 | **`takeScreenshot` 最小间隔** | M3 前在 Neo5 上实测 | 这个数决定以后能不能用“并行线程按固定间隔轮询识别”（类似两个项目的触发器、战斗循环），还是只能按事件触发 |
-| **后台虚拟屏** | `Perception` 和 `Action` 的接口带 `displayId` 参数，v1 固定传主屏 | 通过 Shizuku 或无线调试建虚拟屏，把 App 开在副屏上执行；安卓 11 起无障碍可以按 displayId 操作和截图 |
+| **后台虚拟屏** | `Device.capture` 和 `Frame` 带 `displayId`，v1 固定传主屏（M1 抽出的 `Perception` 沿用） | 通过 Shizuku 或无线调试建虚拟屏，把 App 开在副屏上执行；安卓 11 起无障碍可以按 displayId 操作和截图 |
 | **界面树和 OCR 都靠不住的目标**（如微信视频号的纯图标按钮） | `Finder` 注册表预留兜底槽：`template`（图标模板匹配）、`icon`（小型 YOLO 图标模型）、`api`（App 自带的深链 / Intent）、`vlm`（多模态模型）；v1 遇到这类目标就停下，请用户补教 | 按调研结论和真机效果逐个接入 |
 | **v1 不做的任务包特性** | 字段在 schema 里预留：`screens.goto`、参数槽 | 路由图、参数化任务，按加速或功能需要再加 |
 
@@ -207,7 +228,3 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 5. 每一层没命中的原因（比如“树里有节点但没有文字”“OCR 置信度低”）也记进 `Frame`，既用于停下时给用户的说明，也进轨迹。
 
 `Frame` 只在内存里，这一轮结束就丢弃；进轨迹的只有结构信息和耗时，不含截图和文字。
-
-### 新建仓库时一并带走
-
-`spikes/research/` 下的两份调研报告（以后压延迟时还要用），以及本文档。`spikes/phone_probe/out/` 里的界面树要脱敏后才能作为测试夹具带走。

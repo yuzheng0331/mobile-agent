@@ -64,4 +64,4 @@ docs/    架构文档、BetterGI / OneDragon 调研（以后压低延迟时要�
 
 用 `tools/probe` 在 QQ 上抓会话列表和聊天界面，校准 `listItem` 的规则（列表容器、哪些行算条目、怎么跳过时间分隔条），把脱敏后的界面树放进 `core` 测试夹具，然后在真机上连续跑 20 次。
 
-M1 里还要做的代码改动（见架构文档第 9 节）：抽出 `Perception` 接口并给 `Frame` 加 `id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重。
+M1 里还要做的代码改动（见架构文档第 9 节）：抽出 `Perception` 接口并给 `Frame` 加 `id`、`RunObserver.onStep`。

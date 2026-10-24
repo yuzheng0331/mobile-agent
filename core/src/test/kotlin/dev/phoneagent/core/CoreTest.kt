@@ -68,9 +68,22 @@ class CoreTest {
 
     @Test
     fun `shipped packs validate`() {
-        File("../packs").listFiles { f -> f.extension == "json" }!!.forEach {
-            assertEquals(emptyList(), validate(Packs.parse(it.readText())), it.name)
-        }
+        val packs = File("../packs").listFiles { f -> f.extension == "json" }!!.map { it.name to Packs.parse(it.readText()) }
+        packs.forEach { (name, pack) -> assertEquals(emptyList(), validate(pack), name) }
+        val ids = packs.map { it.second.id }
+        assertEquals(ids.distinct(), ids, "duplicate pack ids")
+    }
+
+    @Test
+    fun `launch presses back toward the start screen at most three times`() {
+        val launchQq = pack("""[{"do":"launch","app":"$QQ","expect":{"anyText":["搜索"]},"timeoutMs":600}]""")
+        val resumed = FakeDevice(douyin, qqChat, qqList)
+        assertTrue(Runner(resumed).run(launchQq).ok)
+        assertEquals(listOf("launch $QQ", "back"), resumed.actions)
+
+        val stuck = FakeDevice(qqChat, actionsChangeScreen = false)
+        assertEquals(Outcome.NO_EFFECT, Runner(stuck).run(launchQq).steps.single().outcome)
+        assertEquals(listOf("launch $QQ", "back", "back", "back"), stuck.actions)
     }
 
     @Test

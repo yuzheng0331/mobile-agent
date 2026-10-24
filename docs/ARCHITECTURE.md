@@ -69,7 +69,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 | `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
 | `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |
 | `ScreenDef`（可选） | `id`、`app`、`marks`（若干 Finder，全部命中才算这个画面），只在前台包名匹配的画面里判定；预留 `goto` 字段，不做路由 | — | M3 前 |
-| `PackSource` | 内置包（assets）、签名下载包、本地补教补丁（只能改坐标）。官方包 id 唯一，冲突时先注册者胜并告警 | 内置 + 补丁；签名下载在做更新渠道时加 | M4（和补教一起做）。现在 `MainActivity` 直接读 assets；M1 只在 `shipped packs validate` 里加一条检查：内置包 id 不能重复 |
+| `PackSource` | 内置包（assets）、签名下载包、本地补教补丁（只能改坐标）。官方包 id 唯一，冲突时先注册者胜并告警 | 内置 + 补丁；签名下载在做更新渠道时加 | M4（和补教一起做）。现在 `MainActivity` 直接读 assets；内置包 id 不重复由 `shipped packs validate` 检查 |
 | `Trace` | 每步记录 找 / 动 / 等 / 查 四段耗时和结果码，不含界面内容 | `StepTrace`（另含命中的找法序号、目标边界、尝试次数） | 已有 |
 
 ## 4. 任务包格式
@@ -111,7 +111,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 - **每步可选**：`timeoutMs`（默认 5000）、`maxRetry`（默认 1）。`ocrText` 可带 `region`（屏幕比例矩形 `[x, y, w, h]`）；区域位置已知、只有一行字时用 `mode: "rec"`，跳过检测、只跑识别（M3）。
 - `listItem` 的具体规则（容器怎么认、哪些行算条目、怎么跳过时间分隔条和系统提示）在实现 QQ 任务时按实际界面树定，微信版本按截图版面定。现在的实现只取容器的直接子节点里可点或可长按的那些，按上边缘排序。（建议，待真机定）
 
-不做：画面路由图、多版本变体、参数槽。三个任务都从“启动 App”开始，启动后的首屏就是固定起点；遇到不在预期首屏的情况（例如停在某个聊天里），v1 先按返回键回到列表，最多 3 次，仍不对就停下。这条 M1 实现（用已有的 `back` 动作，不扩大动作集），现在还没有：QQ 停在某个聊天里时，会在第 1 步的 `anyText: 搜索` 检查上停下。
+不做：画面路由图、多版本变体、参数槽。三个任务都从“启动 App”开始，启动后的首屏就是固定起点；遇到不在预期首屏的情况（例如停在某个聊天里），v1 先按返回键回到列表，最多 3 次，仍不对就停下。已实现（2026-10-25）：`launch` 步的 `expect` 不满足时，`Runner` 按返回键再查，最多 3 次；每次按之前确认前台仍是 `requires` 里的 App，否则停下（`NO_EFFECT`）。用已有的 `back`，动作集不变。
 
 ## 5. 运行时
 
@@ -161,12 +161,12 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 | 里程碑 | 内容 | 完成标准 |
 |---|---|---|
-| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重 | QQ 任务真机 20 次 ≥ 95% |
+| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id`、`RunObserver.onStep` | QQ 任务真机 20 次 ≥ 95% |
 | M2 | 夸克任务 | 同上 |
 | M3 | 微信任务（截图 + OCR + 版面）：`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
 | M4 | 一句话路由接进界面、运行清单 UI 与悬浮面板、`RunObserver.onStuck` 与补教、`PackSource`、安装引导与体检 | 朋友独立装好并跑通三个任务 |
 
-v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包。
+v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包；不在首屏时返回最多 3 次；内置包 id 查重（`shipped packs validate`）。
 
 ## 10. 未决与风险
 

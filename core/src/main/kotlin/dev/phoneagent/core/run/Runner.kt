@@ -4,6 +4,9 @@ import dev.phoneagent.core.ext.Builtins
 import dev.phoneagent.core.ext.Registry
 import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Step
+import kotlinx.serialization.json.JsonObject
+
+private const val MAX_BACKS = 3
 
 enum class Outcome { SUCCESS, MISSING, WRONG_APP, NO_EFFECT, ACTION_FAILED }
 
@@ -84,10 +87,28 @@ class Runner(private val device: Device, private val registry: Registry = Builti
             checkMs += device.nowMs() - start
             if (met) return trace(Outcome.SUCCESS)
 
+            // A launch can resume the app mid-flow (e.g. inside a chat): press back toward its start screen.
+            if (step.action == "launch") {
+                start = device.nowMs()
+                val back = backToStart(expect, requires, step.timeoutMs)
+                actMs += device.nowMs() - start
+                return trace(if (back) Outcome.SUCCESS else Outcome.NO_EFFECT)
+            }
+
             // Look again before repeating, so a menu or long-press is never triggered twice.
             val stillThere = action.needsTarget && findTarget(step, device.capture()) != null
             if (attempts > step.maxRetry || !stillThere) return trace(Outcome.NO_EFFECT)
         }
+    }
+
+    /** Up to [MAX_BACKS] presses of back, each only while a required app is in front. */
+    private fun backToStart(expect: JsonObject, requires: List<String>, timeoutMs: Long): Boolean {
+        repeat(MAX_BACKS) {
+            if (device.capture().packageName !in requires || !device.back()) return false
+            device.awaitSettle(timeoutMs)
+            if (registry.holds(device.capture(), expect)) return true
+        }
+        return false
     }
 
     /** Re-perceives after each settle until [probe] answers or [timeoutMs] passes. */

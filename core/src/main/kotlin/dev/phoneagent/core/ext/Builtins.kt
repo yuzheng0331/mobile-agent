@@ -1,5 +1,8 @@
-package dev.phoneagent.core
+package dev.phoneagent.core.ext
 
+import dev.phoneagent.core.run.Frame
+import dev.phoneagent.core.run.Target
+import dev.phoneagent.core.run.UiNode
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int

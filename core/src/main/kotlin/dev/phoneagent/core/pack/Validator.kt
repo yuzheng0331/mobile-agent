@@ -1,5 +1,8 @@
-package dev.phoneagent.core
+package dev.phoneagent.core.pack
 
+import dev.phoneagent.core.ext.Builtins
+import dev.phoneagent.core.ext.Registry
+import dev.phoneagent.core.run.Frame
 import kotlinx.serialization.json.JsonObject
 
 private val EMPTY_FRAME = Frame(packageName = null, tree = null)

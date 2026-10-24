@@ -8,10 +8,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import dev.phoneagent.core.Pack
-import dev.phoneagent.core.Packs
-import dev.phoneagent.core.Runner
-import dev.phoneagent.core.validate
+import dev.phoneagent.core.pack.Pack
+import dev.phoneagent.core.pack.Packs
+import dev.phoneagent.core.pack.validate
+import dev.phoneagent.core.run.Runner
 import java.util.concurrent.Executors
 
 /** Bundled packs with a run button each, plus a link to the accessibility settings. */

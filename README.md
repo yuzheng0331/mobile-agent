@@ -8,14 +8,14 @@
 
 ```
 core/    纯 Kotlin，可在电脑上测试
-  Frame.kt      一轮感知的结果：界面树 + 按需、按区域缓存的 OCR；各层往同一帧里追加
-  Device.kt     执行器眼中的手机（截取、启动、点/长按、返回、等稳定）；displayId 留给以后的虚拟屏
-  Pack.kt       任务包格式（严格解析，不认识的字段直接报错）
-  Registry.kt   扩展点：找法、预期、动作，都按名字注册
-  Builtins.kt   v1 内置：text / desc / id / listItem；anyText / gone / toast；launch / tap / long / back
-  Validator.kt  加载时校验：未知名字、参数格式、launch 了 requires 以外的 App
-  Runner.kt     逐步执行：找 → 动 → 等稳定 → 查预期；输出不含界面内容的轨迹
-  Router.kt     一句话 → 任务包（按别名匹配，匹配不唯一就不猜）
+  pack/Pack.kt       任务包格式（严格解析，不认识的字段直接报错）
+  pack/Validator.kt  加载时校验：未知名字、参数格式、launch 了 requires 以外的 App
+  run/Frame.kt       一轮感知的结果：界面树 + 按需、按区域缓存的 OCR；各层往同一帧里追加
+  run/Device.kt      执行器眼中的手机（截取、启动、点/长按、返回、等稳定）；displayId 留给以后的虚拟屏
+  run/Runner.kt      逐步执行：找 → 动 → 等稳定 → 查预期；输出不含界面内容的轨迹
+  route/Router.kt    一句话 → 任务包（按别名匹配，匹配不唯一就不猜）
+  ext/Registry.kt    扩展点：找法、预期、动作，都按名字注册
+  ext/Builtins.kt    v1 内置：text / desc / id / listItem；anyText / gone / toast；launch / tap / long / back
 app/     Android：AgentService（无障碍服务，实现 Device）、MainActivity（任务列表）
 packs/   官方任务包 JSON，构建时打进 App 的 assets
 tools/probe/  电脑端抓界面树、截图、对比（uiautomator2），用法见其 README
@@ -64,4 +64,4 @@ docs/    架构文档、BetterGI / OneDragon 调研（以后压低延迟时要�
 
 用 `tools/probe` 在 QQ 上抓会话列表和聊天界面，校准 `listItem` 的规则（列表容器、哪些行算条目、怎么跳过时间分隔条），把脱敏后的界面树放进 `core` 测试夹具，然后在真机上连续跑 20 次。
 
-M1 里还要做的代码改动（见架构文档第 9 节）：`core` 拆成 `pack/ run/ route/ ext/` 子包（之后更新上面的结构图）、抽出 `Perception` 接口并给 `Frame` 加 `id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重。
+M1 里还要做的代码改动（见架构文档第 9 节）：抽出 `Perception` 接口并给 `Frame` 加 `id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重。

@@ -33,7 +33,7 @@
 
 两个 Gradle 模块，加任务包和小工具。不另起框架。
 
-现状（v0.1）：`core` 是一个平铺的包 `dev.phoneagent.core`，文件为 `Frame.kt` `Device.kt` `Pack.kt` `Registry.kt` `Builtins.kt` `Validator.kt` `Runner.kt` `Router.kt`（各文件职责见 README）。M1 内按下面的目标结构拆成子包（见决定记录）：
+`core` 按子包组织，包名 `dev.phoneagent.core.<子包>`（2026-10-25 拆分，见决定记录）。`core/CLAUDE.md`、`app/CLAUDE.md` 是各模块的开发说明：
 
 ```
 core/    纯 Kotlin（JVM 单测，秒级）
@@ -60,7 +60,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 ### 扩展点
 
-依据 `docs/research/bettergi-speed-and-plugins.md` 与 `docs/research/onedragon-speed-and-plugins.md`。两个项目的可插拔都是“**代码封闭、数据开放**”：社区贡献的是数据（识别配置、YAML/JSON 策略），数据只能引用代码里已注册的名字。v1 照此办理：**任务包只能是数据；扩展点是按名字注册的实现（现在是 `Builtins.registry`，拆子包后放在 `core/ext/`），编译期注册，未知名字在加载任务包时由 `validate` 拒收**。不做运行时代码插件、脚本引擎，不动态加载 dex。
+依据 `docs/research/bettergi-speed-and-plugins.md` 与 `docs/research/onedragon-speed-and-plugins.md`。两个项目的可插拔都是“**代码封闭、数据开放**”：社区贡献的是数据（识别配置、YAML/JSON 策略），数据只能引用代码里已注册的名字。v1 照此办理：**任务包只能是数据；扩展点是按名字注册的实现（`core/ext/` 里的 `Builtins.registry`），编译期注册，未知名字在加载任务包时由 `validate` 拒收**。不做运行时代码插件、脚本引擎，不动态加载 dex。
 
 | 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
@@ -161,12 +161,12 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 | 里程碑 | 内容 | 完成标准 |
 |---|---|---|
-| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`core` 拆子包、`Perception` 接口和 `Frame.id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重 | QQ 任务真机 20 次 ≥ 95% |
+| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id`、不在首屏时返回最多 3 次、`RunObserver.onStep`、内置包 id 查重 | QQ 任务真机 20 次 ≥ 95% |
 | M2 | 夸克任务 | 同上 |
 | M3 | 微信任务（截图 + OCR + 版面）：`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
 | M4 | 一句话路由接进界面、运行清单 UI 与悬浮面板、`RunObserver.onStuck` 与补教、`PackSource`、安装引导与体检 | 朋友独立装好并跑通三个任务 |
 
-v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。
+v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包。
 
 ## 10. 未决与风险
 

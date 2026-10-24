@@ -1,4 +1,4 @@
-package dev.phoneagent.core
+package dev.phoneagent.core.run
 
 /**
  * The phone as the runner sees it. `AgentService` implements it on Android; tests

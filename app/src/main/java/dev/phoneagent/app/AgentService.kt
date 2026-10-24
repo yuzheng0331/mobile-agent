@@ -8,11 +8,11 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import dev.phoneagent.core.Box
-import dev.phoneagent.core.Device
-import dev.phoneagent.core.Frame
-import dev.phoneagent.core.Target
-import dev.phoneagent.core.UiNode
+import dev.phoneagent.core.run.Box
+import dev.phoneagent.core.run.Device
+import dev.phoneagent.core.run.Frame
+import dev.phoneagent.core.run.Target
+import dev.phoneagent.core.run.UiNode
 import java.util.IdentityHashMap
 
 /**

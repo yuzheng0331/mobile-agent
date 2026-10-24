@@ -1,4 +1,4 @@
-package dev.phoneagent.core
+package dev.phoneagent.core.pack
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

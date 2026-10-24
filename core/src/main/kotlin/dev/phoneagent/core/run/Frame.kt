@@ -1,4 +1,4 @@
-package dev.phoneagent.core
+package dev.phoneagent.core.run
 
 /** Screen rectangle in pixels. */
 data class Box(val left: Int, val top: Int, val right: Int, val bottom: Int) {

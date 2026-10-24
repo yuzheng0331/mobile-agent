@@ -1,0 +1,15 @@
+#!/bin/sh
+# Runs the core tests before every push; shipped packs are validated there too.
+# Skip once with: git push --no-verify
+
+# Gradle 8.11 needs JDK 17-21; fall back to a JBR 21 when JAVA_HOME is unset.
+if [ -z "$JAVA_HOME" ]; then
+    for jdk in "$HOME"/.jdks/jbr-21*; do
+        [ -d "$jdk" ] && JAVA_HOME="$jdk" && export JAVA_HOME
+    done
+fi
+
+if ! ./gradlew :core:test --console=plain -q; then
+    echo "pre-push: core tests failed, push aborted" >&2
+    exit 1
+fi

@@ -97,9 +97,9 @@ class AgentService : AccessibilityService(), Device {
     private fun confirmJump() {
         val me = applicationInfo.loadLabel(packageManager).toString()
         for (root in windows.mapNotNull { it.root }) {
-            val asks = root.findAccessibilityNodeInfosByText("想要打开").any { node ->
-                node.text?.toString()?.contains(me) == true
-            }
+            // Same dialog window, but the app name and "想要打开" may sit in separate text nodes.
+            val asks = root.findAccessibilityNodeInfosByText("想要打开").isNotEmpty() &&
+                root.findAccessibilityNodeInfosByText(me).isNotEmpty()
             if (!asks) continue
             root.findAccessibilityNodeInfosByText("始终打开").firstOrNull()
                 ?.let { actionable(it, long = false) }

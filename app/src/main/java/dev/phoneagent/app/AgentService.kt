@@ -145,7 +145,11 @@ class AgentService : AccessibilityService(), Device {
 
     override fun press(target: Target, long: Boolean): Boolean {
         val action = if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK
-        val node = target.node?.let { lastNodes[it] }?.let { actionable(it, long) }
+        val info = target.node?.let { lastNodes[it] }
+        // The screen may have changed since capture (a new message moved the bubble, a menu closed): never act on
+        // stale coordinates or a recycled view; report a miss so the runner finds the target again.
+        if (info != null && (!info.refresh() || Rect().also(info::getBoundsInScreen) != target.bounds.toRect())) return false
+        val node = info?.let { actionable(it, long) }
         if (node?.performAction(action) == true) return true
         val path = Path().apply { moveTo(target.bounds.centerX.toFloat(), target.bounds.centerY.toFloat()) }
         val stroke = GestureDescription.StrokeDescription(path, 0, if (long) LONG_PRESS_MS else TAP_MS)
@@ -207,3 +211,5 @@ class AgentService : AccessibilityService(), Device {
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }
 }
+
+private fun Box.toRect() = Rect(left, top, right, bottom)

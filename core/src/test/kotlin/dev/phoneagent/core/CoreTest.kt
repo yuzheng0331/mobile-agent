@@ -28,7 +28,11 @@ private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: 
 
     override fun capture(displayId: Int) = frames[current]
     override fun launch(packageName: String) = act("launch $packageName")
-    override fun press(target: Target, long: Boolean) = act(if (long) "long" else "tap")
+    var pressFailures = 0
+    override fun press(target: Target, long: Boolean): Boolean {
+        if (pressFailures > 0) { pressFailures--; actions += "missed"; return false }
+        return act(if (long) "long" else "tap")
+    }
     override fun back() = act("back")
     override fun nowMs() = now
     override fun awaitSettle(timeoutMs: Long): Boolean {
@@ -136,6 +140,33 @@ class CoreTest {
         )
         assertEquals(Outcome.NO_EFFECT, result.steps.single().outcome)
         assertEquals(listOf("tap"), device.actions)
+    }
+
+    @Test
+    fun `retries on the moved target while the previous step's screen still holds`() {
+        // A new message arrives after the long-press: the menu is gone and the last bubble is a new one.
+        val chatA = frame(QQ, UiNode(desc = "聊天设置"), UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000),
+            children = listOf(message(300, "旧消息"), message(900, "A"))))
+        val chatB = frame(QQ, UiNode(desc = "聊天设置"), UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000),
+            children = listOf(message(300, "旧消息"), message(700, "A"), message(1100, "B"))))
+        val device = FakeDevice(chatA, chatA, chatB, qqMenu)
+        val result = Runner(device).run(pack(
+            """[{"do":"back","expect":{"anyText":["聊天设置"]}},
+               {"do":"long","target":{"intent":"最后一条","find":[{"listItem":-1}]},"expect":{"anyText":["复制"]},"maxRetry":1,"timeoutMs":600}]""",
+        ))
+        assertTrue(result.ok, result.reason)
+        assertEquals(listOf("back", "long", "long"), device.actions)
+        assertEquals(1140, result.steps[1].bounds!!.top) // the new last bubble
+    }
+
+    @Test
+    fun `a press that misses (target moved) finds the target again`() {
+        val device = FakeDevice(qqMenu, douyin).apply { pressFailures = 1 }
+        val result = Runner(device).run(
+            pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"maxRetry":1,"timeoutMs":600}]"""),
+        )
+        assertTrue(result.ok, result.reason)
+        assertEquals(listOf("missed", "tap"), device.actions)
     }
 
     @Test

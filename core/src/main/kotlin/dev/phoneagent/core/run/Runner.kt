@@ -51,7 +51,7 @@ class Runner(
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
         for ((index, step) in pack.steps.withIndex()) {
-            val trace = runStep(index, step, pack.requires)
+            val trace = runStep(index, step, pack.requires, pack.steps.getOrNull(index - 1)?.expect)
             traces += trace
             observer.onStep(trace)
             if (trace.outcome != Outcome.SUCCESS) return RunResult(pack.id, traces, reason(index, step, trace.outcome))
@@ -59,7 +59,7 @@ class Runner(
         return RunResult(pack.id, traces, null)
     }
 
-    private fun runStep(index: Int, step: Step, requires: List<String>): StepTrace {
+    private fun runStep(index: Int, step: Step, requires: List<String>, screen: JsonObject?): StepTrace {
         val action = registry.actions.getValue(step.action)
         var hit: IndexedValue<Target>? = null
         var attempts = 0
@@ -86,6 +86,8 @@ class Runner(
             var start = device.nowMs()
             val done = action.perform(device, step, hit?.value)
             actMs += device.nowMs() - start
+            // A target that moved or vanished before the action lands (e.g. a new chat message): find it again.
+            if (!done && action.needsTarget && attempts <= step.maxRetry) continue
             if (!done) return trace(Outcome.ACTION_FAILED)
 
             // Nothing to check: don't wait for a screen that may never go quiet (e.g. a video feed).
@@ -111,12 +113,16 @@ class Runner(
                 return trace(if (back) Outcome.SUCCESS else Outcome.NO_EFFECT)
             }
 
-            // Look again before repeating, so a menu or long-press is never triggered twice.
-            // Same place and same label: a positional finder (listItem) also hits on a different screen.
-            val again = if (action.needsTarget) findTarget(step, device.capture())?.value else null
+            // Look again before repeating, so a menu or long-press is never triggered twice. "Still on the
+            // same screen" is the previous step's expectation when it has one (the target itself may have
+            // moved, e.g. a new message pushed the last bubble up); otherwise the same place and label,
+            // since a positional finder (listItem) also hits on a different screen.
+            val frame = device.capture()
+            val again = if (action.needsTarget) findTarget(step, frame)?.value else null
             val before = hit?.value
-            val stillThere = again != null && before != null &&
-                again.bounds == before.bounds && again.node?.label == before.node?.label
+            val sameScreen = screen?.let { registry.holds(frame, it) }
+                ?: (again?.bounds == before?.bounds && again?.node?.label == before?.node?.label)
+            val stillThere = again != null && sameScreen
             if (attempts > step.maxRetry || !stillThere) return trace(Outcome.NO_EFFECT)
         }
     }

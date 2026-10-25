@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Packs
 import dev.phoneagent.core.pack.validate
@@ -69,7 +70,11 @@ class MainActivity : Activity() {
                 runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
             }).run(pack)
             Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
-            runOnUiThread { status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n") }
+            runOnUiThread {
+                status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n")
+                // The target app hides this screen, so say why it stopped over it; a dialog is the usual cause.
+                result.reason?.let { Toast.makeText(this, "$it\n如果有弹窗挡住，请先关掉再重新运行", Toast.LENGTH_LONG).show() }
+            }
         }
     }
 

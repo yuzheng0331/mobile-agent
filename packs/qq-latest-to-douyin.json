@@ -8,7 +8,7 @@
   "steps": [
     {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["搜索"]}},
     {"do": "tap",
-     "target": {"intent": "会话列表第一行", "find": [{"listItem": 0}]},
+     "target": {"intent": "会话列表第一行", "find": [{"listItem": 1}]},
      "expect": {"anyText": ["聊天设置"]}},
     {"do": "long",
      "target": {"intent": "聊天区最下面一条消息", "find": [{"listItem": -1}]},

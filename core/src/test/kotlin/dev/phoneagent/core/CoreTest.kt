@@ -53,8 +53,10 @@ private fun row(top: Int, label: String, long: Boolean = false) = UiNode(
 private fun frame(pkg: String, vararg nodes: UiNode) = Frame(pkg, UiNode(children = nodes.toList()))
 
 private val QQ = "com.tencent.mobileqq"
-private val qqList = frame(QQ, UiNode(desc = "搜索"),
-    UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2200), children = listOf(row(400, "会话B"), row(250, "会话A"))))
+// As on a real QQ with few chats: the list fits one screen (not scrollable) and its first row is the search bar.
+private val qqList = frame(QQ,
+    UiNode(className = "androidx.recyclerview.widget.RecyclerView", bounds = Box(0, 0, 1080, 2400),
+        children = listOf(row(400, "会话B"), row(212, "搜索").copy(desc = "搜索"), row(250, "会话A"))))
 private val qqChat = frame(QQ, UiNode(desc = "聊天设置"),
     UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000),
         children = listOf(row(300, "旧消息", long = true), row(900, "最新消息", long = true))))
@@ -96,7 +98,7 @@ class CoreTest {
         assertEquals(result.steps, seen)
         assertEquals(listOf("launch $QQ", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
         // listItem 0 is the topmost row, -1 the bottom-most message
-        assertEquals(250, result.steps[1].bounds!!.top)
+        assertEquals(250, result.steps[1].bounds!!.top) // row 1: row 0 is the search bar
         assertEquals(900, result.steps[2].bounds!!.top)
     }
 

@@ -45,13 +45,16 @@ object Builtins {
 
     /**
      * Item N (negative counts from the end) of a list: the clickable direct children of
-     * the container found by `in`, or of the largest scrollable node, ordered top to bottom.
+     * the container found by `in`, or of the largest scrollable node (else the largest list view), ordered top to bottom.
      * shortcut: direct children only, check against real QQ/WeChat trees in M1/M3.
      */
     private fun listItem(frame: Frame, spec: JsonObject, registry: Registry): Target? {
         val index = spec.getValue("listItem").jsonPrimitive.int
         val container = spec["in"]?.let { registry.find(frame, it.jsonObject)?.node }
             ?: frame.nodes().filter { it.scrollable }.maxByOrNull { it.bounds.area }
+            // A list short enough to fit one screen is not scrollable (QQ with few chats).
+            ?: frame.nodes().filter { it.className?.endsWith("RecyclerView") == true || it.className?.endsWith("ListView") == true }
+                .maxByOrNull { it.bounds.area }
             ?: return null
         val items = container.children.filter { it.clickable || it.longClickable }.sortedBy { it.bounds.top }
         val item = items.getOrNull(if (index < 0) items.size + index else index) ?: return null

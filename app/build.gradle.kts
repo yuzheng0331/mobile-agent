@@ -32,4 +32,6 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    // OCR (M3); debug-only until the speed test picks a model.
+    debugImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }

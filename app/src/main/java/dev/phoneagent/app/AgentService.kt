@@ -3,14 +3,18 @@ package dev.phoneagent.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Toast
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.TextView
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
@@ -86,17 +90,48 @@ class AgentService : AccessibilityService(), Device {
         // Only report success once the app is really in front: vivo may hold it behind a jump-confirm dialog.
         var deadline = nowMs() + LAUNCH_TIMEOUT_MS
         var asked = false
-        while (nowMs() < deadline) {
-            if (rootInActiveWindow?.packageName == packageName) return true
-            // vivo blocks taps on this dialog from accessibility (node clicks and gestures), so ask the user.
-            if (!asked && jumpDialogShown()) {
-                asked = true
-                deadline = nowMs() + USER_CONFIRM_TIMEOUT_MS
-                mainHandler.post { Toast.makeText(this, "请在弹窗里点“始终打开”，任务会继续", Toast.LENGTH_LONG).show() }
+        try {
+            while (nowMs() < deadline) {
+                if (rootInActiveWindow?.packageName == packageName) return true
+                // vivo blocks taps on this dialog from accessibility (node clicks and gestures), so ask the user.
+                if (!asked && jumpDialogShown()) {
+                    asked = true
+                    deadline = nowMs() + USER_CONFIRM_TIMEOUT_MS
+                    showHint("Phone Agent：请在下方弹窗里点“始终打开”，任务会继续")
+                }
+                awaitSettle(deadline - nowMs())
             }
-            awaitSettle(deadline - nowMs())
+            return false
+        } finally {
+            if (asked) hideHint()
         }
-        return false
+    }
+
+    // A strip at the top of the screen, above the dialog at the bottom; touches pass through it.
+    private var hint: TextView? = null
+
+    private fun showHint(text: String) = mainHandler.post {
+        val view = TextView(this).apply {
+            this.text = text
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(220, 30, 30, 30))
+            setPadding(48, 120, 48, 48)
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP }
+        getSystemService(WindowManager::class.java).addView(view, params)
+        hint = view
+    }
+
+    private fun hideHint() = mainHandler.post {
+        hint?.let { getSystemService(WindowManager::class.java).removeView(it) }
+        hint = null
     }
 
     /** The system dialog "<this app> 想要打开 <target>"; the name and the phrase may sit in separate nodes. */

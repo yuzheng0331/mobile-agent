@@ -1,5 +1,6 @@
 package dev.phoneagent.core
 
+import dev.phoneagent.core.ext.Builtins
 import dev.phoneagent.core.pack.Packs
 import dev.phoneagent.core.pack.validate
 import dev.phoneagent.core.route.route
@@ -13,6 +14,8 @@ import dev.phoneagent.core.run.Target
 import dev.phoneagent.core.run.TextHit
 import dev.phoneagent.core.run.TextRecognizer
 import dev.phoneagent.core.run.UiNode
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -148,6 +151,17 @@ class CoreTest {
         val result = Runner(device).run(qqPack)
         assertTrue(result.ok, result.reason)
         assertEquals("back", device.actions[1])
+    }
+
+    @Test
+    fun `lastMessage skips full-width system notices`() {
+        // Real QQ: a recall notice is a full-width long-clickable row below the last real message.
+        val notice = UiNode(bounds = Box(0, 1900, 1080, 2000), children = listOf(
+            UiNode(bounds = Box(0, 1920, 1080, 1980), clickable = true, longClickable = true, children = listOf(UiNode(text = "你撤回了一条消息")))))
+        val chat = frame(QQ, UiNode(desc = "聊天设置"), UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2100),
+            children = listOf(message(300, "旧消息"), message(900, "最新消息"), notice)))
+        val hit = Builtins.registry.find(chat, Json.parseToJsonElement("""{"lastMessage":true}""").jsonObject)
+        assertEquals(Box(140, 940, 810, 1300), hit!!.bounds)
     }
 
     @Test

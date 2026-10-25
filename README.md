@@ -15,7 +15,7 @@ core/    纯 Kotlin，可在电脑上测试
   run/Runner.kt      逐步执行：找 → 动 → 等稳定 → 查预期；输出不含界面内容的轨迹
   route/Router.kt    一句话 → 任务包（按别名匹配，匹配不唯一就不猜）
   ext/Registry.kt    扩展点：找法、预期、动作，都按名字注册
-  ext/Builtins.kt    v1 内置：text / desc / id / listItem；anyText / gone / toast；launch / tap / long / back
+  ext/Builtins.kt    v1 内置：text / desc / id / listItem / lastMessage；anyText / gone / toast；launch / tap / long / back
 app/     Android：AgentService（无障碍服务，实现 Device）、MainActivity（任务列表）
 packs/   官方任务包 JSON，构建时打进 App 的 assets
 tools/probe/  电脑端抓界面树、截图、对比（uiautomator2），用法见其 README

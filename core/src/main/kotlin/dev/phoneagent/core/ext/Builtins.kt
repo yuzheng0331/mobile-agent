@@ -19,6 +19,7 @@ object Builtins {
             "desc" to byField { it.desc },
             "id" to byField { it.id },
             "listItem" to Finder(::listItem),
+            "lastMessage" to Finder(::lastMessage),
         ),
         expectations = mapOf(
             "anyText" to Expectation { frame, arg -> strings(arg).any { onScreen(frame, it) } },
@@ -70,6 +71,22 @@ object Builtins {
         val largest = actionables.maxOf { it.bounds.area }
         val node = actionables.last { it.bounds.area == largest }
         return Target(node.bounds, node)
+    }
+
+    /**
+     * The bottom-most message bubble in the chat (the largest scrollable list). A message has a
+     * long-pressable bubble narrower than the list; system notices (recalls, joins, 精华) are
+     * full-width rows, so they are skipped. Based on QQ chat trees for text, image, video, voice.
+     */
+    private fun lastMessage(frame: Frame, spec: JsonObject, registry: Registry): Target? {
+        val list = frame.nodes().filter { it.scrollable }.maxByOrNull { it.bounds.area } ?: return null
+        val width = list.bounds.right - list.bounds.left
+        for (item in list.children.sortedByDescending { it.bounds.top }) {
+            val bubble = item.walk().filter { it.longClickable && it.bounds.right - it.bounds.left < width }
+                .maxByOrNull { it.bounds.area } ?: continue
+            return Target(bubble.bounds, bubble)
+        }
+        return null
     }
 
     private fun actionable(node: UiNode) = node.clickable || node.longClickable

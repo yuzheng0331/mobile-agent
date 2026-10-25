@@ -65,7 +65,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 | 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
 | `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。M1 抽出 `Perception` 接口和 `TreePerception`，给 `Frame` 加 `id`；`ScreenshotOcrPerception` 在 M3 |
-| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc` `id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数） | “最后一条消息”现在用 `listItem: -1`（临时，见决定记录）；是否单独做 `lastMessage`、锚点叫 `in` 还是 `under`——待真机定。`ocrText`、`region` 在 M3；预留 `template` |
+| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc`（可 `exact`）`id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数）`lastMessage`（聊天区最下面一条消息气泡，跳过整行宽的系统提示） | 锚点叫 `in` 还是 `under` 待定；`ocrText`、`region` 在 M3；预留 `template` |
 | `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
 | `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |
 | `ScreenDef`（可选） | `id`、`app`、`marks`（若干 Finder，全部命中才算这个画面），只在前台包名匹配的画面里判定；预留 `goto` 字段，不做路由 | — | M3 前 |
@@ -78,7 +78,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 真实的例子见 `packs/qq-latest-to-douyin.json`（不在这里抄一份，免得漂移）。它的步骤：启动 QQ（预期有“联系人”标签且没有侧边栏的“返回”；不满足就按返回键，最多 3 次）→ 点底部“消息”标签 → 点会话列表第一行 → 长按聊天区最下面一条消息 → 点“复制” → 启动抖音。
 
-- **找法种类**（v1 只做需要的）：已有 `text`、`desc`（先精确匹配，再退到“包含”；加 `"exact": true` 不退，用于“消息”这类会被更长文字包含的短标签）、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。“聊天区最下面一条消息气泡”现在用 `listItem: -1` 表示；是否另做 `lastMessage`（能跳过时间分隔条、系统提示）待真机定。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
+- **找法种类**（v1 只做需要的）：已有 `text`、`desc`（先精确匹配，再退到“包含”；加 `"exact": true` 不退，用于“消息”这类会被更长文字包含的短标签）、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。`lastMessage`：聊天列表里从下往上第一个含“比列表窄的可长按节点”的条目，取其中最大的那个（气泡）；系统提示（撤回、入群、精华）是整行宽，被跳过（依据 2026-10-25 QQ 文字/图片/视频/语音/系统提示的界面树）。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
 - **预期**：`anyText`（界面上出现某些文字之一）、`gone`（某文字消失）、`toast`（出现指定提示）。微信步骤的预期用 OCR 文字判断。
 - **`ifMissing`**：找不到目标时给用户看的人话原因，而不是笼统的“失败”。
 - **包头字段**：`schemaVersion`（必填，现在是 1）、`version`、`author`、`needs`（如 `["ocr"]`）、`testedWith`（如 `{"com.tencent.mm": "8.0.x"}`）。App 不认识的 `schemaVersion` 或缺少 `needs` 里的能力时，加载就拒收，不会跑到一半才失败。解析是严格的：不认识的字段直接报错。补教补丁记下当时的目标 App 版本，版本一变就提示“补丁可能失效”。
@@ -184,7 +184,7 @@ v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 �
 | `core` 在 M1 内拆成 `pack/ run/ route/ ext/` 子包；M1 就抽出 `Perception` 接口，给 `Frame` 加 `id` | 用户（2026-10-24 校准） |
 | `PackSource` 推到 M4，和补教一起做；M1 只检查内置包 id 不重复 | 用户（2026-10-24 校准） |
 | vivo 从后台启动别的 App 时弹跳转确认框：试过自动点，vivo 拦截无障碍的节点点击和手势，所以不点，改为提示用户并等最多 30 s（不变量不变）；`launch` 改为确认目标 App 真的到了前台才算成功（最多等 5 s） | 用户（2026-10-25，真机发现） |
-| “聊天区最下面一条消息”暂用 `listItem: -1`（临时）；是否另做 `lastMessage`、锚点叫 `in` 还是 `under`，等 QQ 真机界面树再定 | 用户（2026-10-24 校准） |
+| “聊天区最下面一条消息”用 `lastMessage` 找法（不再用临时的 `listItem: -1`）：系统提示是整行宽，消息气泡比列表窄。锚点叫 `in` 还是 `under` 仍待定 | 用户（2026-10-25，按真机界面树定） |
 
 ## 11. 现在就留好接口、以后再做的事
 

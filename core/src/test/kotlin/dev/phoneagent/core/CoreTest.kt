@@ -62,7 +62,7 @@ private const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
 // As on real QQ: a chat row's description can contain "消息" ("…3条新消息"); the tab's text is exactly "消息".
 private val qqTab = Box(0, 2300, 270, 2400)
 private val qqList = frame(QQ, UiNode(desc = "群聊，3条新消息", clickable = true, bounds = Box(0, 374, 1080, 568)),
-    UiNode(text = "消息", clickable = true, bounds = qqTab),
+    UiNode(text = "消息", clickable = true, bounds = qqTab), UiNode(text = "联系人", clickable = true),
 
     UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400), children = listOf(UiNode(children = listOf(
         UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400),
@@ -127,6 +127,26 @@ class CoreTest {
         assertEquals(Outcome.MISSING, result.steps.last().outcome)
         assertEquals(4, result.steps.last().index)
         assertTrue(result.reason!!.contains("不是文字"), result.reason)
+    }
+
+    @Test
+    fun `qq pack backs out of a group chat that also shows 搜索 and 精华消息`() {
+        val groupChat = frame(QQ, UiNode(desc = "聊天设置"), UiNode(desc = "搜索"), UiNode(text = "精华消息", clickable = true))
+        val device = FakeDevice(douyin, groupChat, qqList, qqList, qqChat, qqMenu, qqChat, douyin)
+        val result = Runner(device).run(qqPack)
+        assertTrue(result.ok, result.reason)
+        assertEquals(listOf("launch $QQ", "back", "tap", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
+        assertEquals(qqTab, result.steps[1].bounds)
+    }
+
+    @Test
+    fun `exact text never falls back to a longer label`() {
+        // Real QQ group chat: no 消息 tab, but a toolbar entry 精华消息.
+        val chat = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "精华消息", clickable = true))
+        val tab = pack("""[{"do":"tap","target":{"intent":"消息标签","find":[{"text":"消息","exact":true}]},"timeoutMs":600}]""")
+        val device = FakeDevice(chat)
+        assertEquals(Outcome.MISSING, Runner(device).run(tab).steps.single().outcome)
+        assertEquals(emptyList(), device.actions)
     }
 
     @Test

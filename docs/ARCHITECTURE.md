@@ -76,35 +76,9 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 一个任务 = 若干步，每步写“做什么、怎么找、做完该看到什么”。找法按顺序尝试，前一个找不到才用下一个。
 
-下面是仓库里真实的 `packs/qq-latest-to-douyin.json`（草稿，列表规则还没在真实 QQ 界面上校准）：
+真实的例子见 `packs/qq-latest-to-douyin.json`（不在这里抄一份，免得漂移）。它的步骤：启动 QQ（预期首屏有“联系人”标签）→ 点底部“消息”标签 → 点会话列表第一行 → 长按聊天区最下面一条消息 → 点“复制” → 启动抖音。
 
-```json
-{
-  "schemaVersion": 1,
-  "id": "qq-latest-to-douyin",
-  "version": "0.1.0",
-  "author": "phone-agent",
-  "aliases": ["复制QQ最新消息", "QQ最新消息然后开抖音"],
-  "requires": ["com.tencent.mobileqq", "com.ss.android.ugc.aweme"],
-  "steps": [
-    {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["搜索"]}},
-    {"do": "tap",
-     "target": {"intent": "会话列表第一行", "find": [{"listItem": 0}]},
-     "expect": {"anyText": ["聊天设置"]}},
-    {"do": "long",
-     "target": {"intent": "聊天区最下面一条消息", "find": [{"listItem": -1}]},
-     "expect": {"anyText": ["复制"]},
-     "ifMissing": "聊天里没有消息"},
-    {"do": "tap",
-     "target": {"intent": "复制", "find": [{"text": "复制"}]},
-     "expect": {"gone": ["复制"]},
-     "ifMissing": "最新消息不是文字（图片、视频或语音），不能复制"},
-    {"do": "launch", "app": "com.ss.android.ugc.aweme"}
-  ]
-}
-```
-
-- **找法种类**（v1 只做需要的）：已有 `text`、`desc`、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。“聊天区最下面一条消息气泡”现在用 `listItem: -1` 表示；是否另做 `lastMessage`（能跳过时间分隔条、系统提示）待真机定。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
+- **找法种类**（v1 只做需要的）：已有 `text`、`desc`（先精确匹配，再退到“包含”；加 `"exact": true` 不退，用于“消息”这类会被更长文字包含的短标签）、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。“聊天区最下面一条消息气泡”现在用 `listItem: -1` 表示；是否另做 `lastMessage`（能跳过时间分隔条、系统提示）待真机定。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
 - **预期**：`anyText`（界面上出现某些文字之一）、`gone`（某文字消失）、`toast`（出现指定提示）。微信步骤的预期用 OCR 文字判断。
 - **`ifMissing`**：找不到目标时给用户看的人话原因，而不是笼统的“失败”。
 - **包头字段**：`schemaVersion`（必填，现在是 1）、`version`、`author`、`needs`（如 `["ocr"]`）、`testedWith`（如 `{"com.tencent.mm": "8.0.x"}`）。App 不认识的 `schemaVersion` 或缺少 `needs` 里的能力时，加载就拒收，不会跑到一半才失败。解析是严格的：不认识的字段直接报错。补教补丁记下当时的目标 App 版本，版本一变就提示“补丁可能失效”。

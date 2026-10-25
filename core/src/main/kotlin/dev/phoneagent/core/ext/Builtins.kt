@@ -5,6 +5,7 @@ import dev.phoneagent.core.run.Target
 import dev.phoneagent.core.run.UiNode
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -36,10 +37,13 @@ object Builtins {
     )
 
     /** Exact match first, then the first node containing the text. */
+    // `"exact": true` turns off the contains fallback, for short labels like "消息" that longer ones ("精华消息") contain.
     private fun byField(field: (UiNode) -> String?) = Finder { frame, spec, _ ->
         val want = spec.values.first().jsonPrimitive.content
+        val exact = spec["exact"]?.jsonPrimitive?.boolean == true
         val nodes = frame.nodes().filter { field(it) != null }.toList()
-        val hit = nodes.firstOrNull { field(it)!!.trim() == want } ?: nodes.firstOrNull { want in field(it)!! }
+        val hit = nodes.firstOrNull { field(it)!!.trim() == want }
+            ?: if (exact) null else nodes.firstOrNull { want in field(it)!! }
         hit?.let { Target(it.bounds, it) }
     }
 

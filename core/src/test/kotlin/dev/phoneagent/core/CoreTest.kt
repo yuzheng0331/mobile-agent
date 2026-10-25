@@ -55,7 +55,11 @@ private val QQ = "com.tencent.mobileqq"
 // As on a real QQ with few chats: the list fits one screen (not scrollable), sits inside a same-size
 // page RecyclerView, and its first row is the search bar.
 private const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
-private val qqList = frame(QQ, UiNode(text = "消息", clickable = true, bounds = Box(0, 2300, 270, 2400)),
+// As on real QQ: a chat row's description can contain "消息" ("…3条新消息"); the tab's text is exactly "消息".
+private val qqTab = Box(0, 2300, 270, 2400)
+private val qqList = frame(QQ, UiNode(desc = "群聊，3条新消息", clickable = true, bounds = Box(0, 374, 1080, 568)),
+    UiNode(text = "消息", clickable = true, bounds = qqTab),
+
     UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400), children = listOf(UiNode(children = listOf(
         UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400),
             children = listOf(row(400, "会话B"), row(212, "搜索").copy(desc = "搜索"), row(250, "会话A"))))))))
@@ -106,6 +110,7 @@ class CoreTest {
         assertEquals(result.steps, seen)
         assertEquals(listOf("launch $QQ", "tap", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
         // listItem 0 is the topmost row, -1 the bottom-most message
+        assertEquals(qqTab, result.steps[1].bounds) // the tab, not a row mentioning 消息
         assertEquals(250, result.steps[2].bounds!!.top) // row 1: row 0 is the search bar
         assertEquals(Box(140, 940, 810, 1300), result.steps[3].bounds) // the bubble, not the avatar
     }

@@ -8,7 +8,7 @@
   "steps": [
     {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["搜索"]}},
     {"do": "tap",
-     "target": {"intent": "底部“消息”标签（QQ 可能停在动态、联系人等标签）", "find": [{"desc": "消息"}, {"text": "消息"}]},
+     "target": {"intent": "底部“消息”标签（QQ 可能停在动态、联系人等标签）", "find": [{"text": "消息"}]},
      "ifMissing": "没找到 QQ 底部的“消息”标签"},
     {"do": "tap",
      "target": {"intent": "会话列表第一行", "find": [{"listItem": 1}]},

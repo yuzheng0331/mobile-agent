@@ -123,6 +123,17 @@ class CoreTest {
     }
 
     @Test
+    fun `no retry when the screen changed, even if a positional finder hits again`() {
+        fun list(label: String) = frame(QQ, UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000), children = listOf(row(250, label))))
+        val device = FakeDevice(list("会话A"), list("群相册"))
+        val result = Runner(device).run(
+            pack("""[{"do":"tap","target":{"intent":"第一行","find":[{"listItem":0}]},"expect":{"anyText":["聊天设置"]},"maxRetry":1,"timeoutMs":600}]"""),
+        )
+        assertEquals(Outcome.NO_EFFECT, result.steps.single().outcome)
+        assertEquals(listOf("tap"), device.actions)
+    }
+
+    @Test
     fun `no effect retries only up to maxRetry`() {
         val device = FakeDevice(qqMenu, actionsChangeScreen = false)
         val result = Runner(device).run(

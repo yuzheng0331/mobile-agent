@@ -112,7 +112,11 @@ class Runner(
             }
 
             // Look again before repeating, so a menu or long-press is never triggered twice.
-            val stillThere = action.needsTarget && findTarget(step, device.capture()) != null
+            // Same place and same label: a positional finder (listItem) also hits on a different screen.
+            val again = if (action.needsTarget) findTarget(step, device.capture())?.value else null
+            val before = hit?.value
+            val stillThere = again != null && before != null &&
+                again.bounds == before.bounds && again.node?.label == before.node?.label
             if (attempts > step.maxRetry || !stillThere) return trace(Outcome.NO_EFFECT)
         }
     }

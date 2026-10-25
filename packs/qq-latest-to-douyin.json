@@ -6,7 +6,7 @@
   "aliases": ["复制QQ最新消息", "QQ最新消息然后开抖音"],
   "requires": ["com.tencent.mobileqq", "com.ss.android.ugc.aweme"],
   "steps": [
-    {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["联系人"]}},
+    {"do": "launch", "app": "com.tencent.mobileqq", "expect": {"anyText": ["联系人"], "gone": ["返回"]}},
     {"do": "tap",
      "target": {"intent": "底部“消息”标签（QQ 可能停在动态、联系人等标签）", "find": [{"text": "消息", "exact": true}]},
      "ifMissing": "没找到 QQ 底部的“消息”标签"},

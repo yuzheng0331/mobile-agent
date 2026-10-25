@@ -140,6 +140,17 @@ class CoreTest {
     }
 
     @Test
+    fun `qq pack closes the side drawer, whose page underneath still shows the tabs`() {
+        // Real QQ: the drawer slides over the main page; the tabs and list below stay in the tree.
+        val drawer = frame(QQ, UiNode(desc = "返回", clickable = true), UiNode(text = "联系人"),
+            UiNode(scrollable = true, bounds = Box(0, 900, 1080, 1800), children = listOf(row(950, "相册"))))
+        val device = FakeDevice(douyin, drawer, qqList, qqList, qqChat, qqMenu, qqChat, douyin)
+        val result = Runner(device).run(qqPack)
+        assertTrue(result.ok, result.reason)
+        assertEquals("back", device.actions[1])
+    }
+
+    @Test
     fun `exact text never falls back to a longer label`() {
         // Real QQ group chat: no 消息 tab, but a toolbar entry 精华消息.
         val chat = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "精华消息", clickable = true))

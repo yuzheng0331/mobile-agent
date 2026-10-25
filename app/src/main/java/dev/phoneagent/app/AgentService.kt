@@ -83,7 +83,7 @@ class AgentService : AccessibilityService(), Device {
         val deadline = nowMs() + LAUNCH_TIMEOUT_MS
         while (nowMs() < deadline) {
             if (rootInActiveWindow?.packageName == packageName) return true
-            confirmJump(packageName)
+            confirmJump()
             awaitSettle(deadline - nowMs())
         }
         return false
@@ -91,18 +91,17 @@ class AgentService : AccessibilityService(), Device {
 
     /**
      * The one exception to "only touch required apps" (owner's decision): the system dialog
-     * "<this app> 想要打开 <target>". Taps "仅打开一次" only, never "始终打开", and only when the
-     * dialog names this app and the target the runner is launching.
+     * "<this app> 想要打开 <target>". Taps "始终打开" when the dialog names this app, so it is
+     * asked once per target; this app only ever launches the apps a pack requires.
      */
-    private fun confirmJump(target: String) {
+    private fun confirmJump() {
         val me = applicationInfo.loadLabel(packageManager).toString()
-        val them = packageManager.getApplicationInfo(target, 0).loadLabel(packageManager).toString()
         for (root in windows.mapNotNull { it.root }) {
             val asks = root.findAccessibilityNodeInfosByText("想要打开").any { node ->
-                node.text?.toString()?.let { me in it && them in it } == true
+                node.text?.toString()?.contains(me) == true
             }
             if (!asks) continue
-            root.findAccessibilityNodeInfosByText("仅打开一次").firstOrNull()
+            root.findAccessibilityNodeInfosByText("始终打开").firstOrNull()
                 ?.let { actionable(it, long = false) }
                 ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             return

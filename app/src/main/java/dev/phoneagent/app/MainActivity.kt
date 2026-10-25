@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     private fun run(pack: Pack) {
         val device = AgentService.instance ?: return run { status.text = "请先开启无障碍服务" }
         status.text = "运行中：${pack.id}"
+        device.useOcr("ocr" in pack.needs)
         worker.execute {
             val lines = mutableListOf<String>()
             val result = Runner(device, observer = object : RunObserver {

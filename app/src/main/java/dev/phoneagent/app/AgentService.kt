@@ -21,7 +21,9 @@ import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Target
+import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.run.Pixels
+import dev.phoneagent.core.run.TextRecognizer
 import dev.phoneagent.core.run.UiNode
 import java.util.IdentityHashMap
 import java.util.concurrent.CountDownLatch
@@ -37,6 +39,26 @@ class AgentService : AccessibilityService(), Device {
 
     @Volatile private var lastChangeAt = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // OCR: loaded once per process (31 MB of weights), only by runs whose pack needs it.
+    private val ocr by lazy {
+        fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
+        PpOcr(bytes("det.onnx"), bytes("rec.onnx"), assets.open("ocr/dict.txt").bufferedReader().readLines())
+    }
+    private val ocrReader = object : TextRecognizer {
+        override fun recognize(pixels: Pixels, region: Box?) = ocr.recognize(pixels, region)
+        override fun readLine(pixels: Pixels, region: Box) = ocr.readLine(pixels, region)
+    }
+    @Volatile private var recognizer: TextRecognizer? = null
+
+    /**
+     * Turns OCR on for the next run (or off). On, it loads and warms up the models in the
+     * background, so that cost overlaps launching the target app instead of the first OCR step.
+     */
+    fun useOcr(on: Boolean) {
+        recognizer = if (on) ocrReader else null
+        if (on) Thread { resources.displayMetrics.let { ocr.warmUp(it.widthPixels, it.heightPixels) } }.start()
+    }
     private val toasts = ArrayDeque<Pair<Long, String>>()
 
     // Nodes of the last capture, to act on the real node behind a target.
@@ -85,7 +107,7 @@ class AgentService : AccessibilityService(), Device {
             while (toasts.isNotEmpty() && toasts.first().first < since) toasts.removeFirst()
             toasts.map { it.second }
         }
-        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId, shooter = { screenshot(displayId) })
+        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId, recognizer, shooter = { screenshot(displayId) })
     }
 
     /**

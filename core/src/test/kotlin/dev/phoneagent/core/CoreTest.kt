@@ -326,12 +326,24 @@ class CoreTest {
     }
 
     @Test
-    fun `frame runs OCR once per region`() {
+    fun `frame runs OCR once per region, on one screenshot, and only when the run has OCR`() {
         var calls = 0
-        val frame = Frame("p", null, recognizer = { calls++; listOf(TextHit("复制", Box(0, 0, 1, 1), 0.9f)) })
+        var shots = 0
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = listOf(TextHit("复制", Box(0, 0, 1, 1), 0.9f)).also { calls++ }
+            override fun readLine(pixels: Pixels, region: Box) = null.also { calls++ }
+        }
+        val frame = Frame("p", null, recognizer = reader, shooter = { shots++; Pixels(1, 1, intArrayOf(0)) })
         frame.ocr(Box(0, 0, 10, 10))
         frame.ocr(Box(0, 0, 10, 10))
         frame.ocr()
-        assertEquals(2, calls)
+        frame.ocrLine(Box(0, 0, 5, 5))
+        frame.ocrLine(Box(0, 0, 5, 5)) // a null answer is cached too
+        assertEquals(3, calls)
+        assertEquals(1, shots)
+
+        val noOcr = Frame("p", null, shooter = { shots++; Pixels(1, 1, intArrayOf(0)) })
+        assertEquals(emptyList(), noOcr.ocr())
+        assertEquals(1, shots) // no recognizer, no screenshot
     }
 }

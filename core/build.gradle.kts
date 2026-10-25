@@ -18,6 +18,10 @@ kotlin {
 
 dependencies {
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    // OCR compiles against the desktop runtime and is tested with it; the app ships the
+    // Android build, whose public API is the same. Keep both on the same version.
+    compileOnly("com.microsoft.onnxruntime:onnxruntime:1.20.0")
+    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     testImplementation(kotlin("test"))
 }
 

@@ -4,10 +4,14 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.app.Activity
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.widget.TextView
+import dev.phoneagent.core.ocr.PpOcr
+import dev.phoneagent.core.run.Box
+import dev.phoneagent.core.run.Pixels
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -30,11 +34,45 @@ class OcrBenchActivity : Activity() {
         Thread {
             val dirs = File(getExternalFilesDir(null), "ocr").listFiles { f -> File(f, "det.onnx").isFile }.orEmpty().sortedBy { it.name }
             val shots = screenshots()
-            val lines = listOf(shots) + if (dirs.isEmpty()) listOf("没有模型：把 det.onnx / rec.onnx 推到 ${getExternalFilesDir(null)}/ocr/<名字>/")
+            val e2e = runCatching { endToEnd() }.getOrElse { "端到端 OCR 出错：$it" }
+            val lines = listOf(shots, e2e) + if (dirs.isEmpty()) listOf("没有模型：把 det.onnx / rec.onnx 推到 ${getExternalFilesDir(null)}/ocr/<名字>/")
             else dirs.flatMap { dir -> THREADS.map { t -> runCatching { bench(dir, t) }.getOrElse { "${dir.name} t=$t 出错：$it" } } }
             lines.forEach { Log.i(TAG, it) }
             runOnUiThread { out.text = lines.joinToString("\n\n") }
         }.start()
+    }
+
+    /**
+     * The shipped OCR (assets, PpOcr, 4 threads) end to end on `files/ocr/screen.png`, a real
+     * screenshot pushed with adb: whole screen, a quarter-height band, and one line. Logs box
+     * counts and times only, never the text.
+     */
+    private fun endToEnd(): String {
+        val file = File(getExternalFilesDir(null), "ocr/screen.png")
+        if (!file.isFile) return "端到端 OCR：没有 ${file.path}"
+        val bitmap = BitmapFactory.decodeFile(file.path)
+        val screen = Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
+            bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        })
+        fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
+        var start = SystemClock.uptimeMillis()
+        val ocr = PpOcr(bytes("det.onnx"), bytes("rec.onnx"), assets.open("ocr/dict.txt").bufferedReader().readLines())
+        val loadMs = SystemClock.uptimeMillis() - start
+        start = SystemClock.uptimeMillis()
+        ocr.warmUp(screen.width, screen.height)
+        val warmMs = SystemClock.uptimeMillis() - start
+        fun timed(block: () -> Int): Pair<Int, Long> {
+            val runs = List(3) { val t = SystemClock.uptimeMillis(); block() to SystemClock.uptimeMillis() - t }
+            return runs.first().first to runs.map { it.second }.sorted()[1]
+        }
+        val (all, allMs) = timed { ocr.recognize(screen, null).size }
+        val band = Box(0, screen.height * 3 / 4, screen.width, screen.height)
+        val (part, partMs) = timed { ocr.recognize(screen, band).size }
+        val line = ocr.recognize(screen, null).first().bounds
+        val (_, lineMs) = timed { if (ocr.readLine(screen, line) != null) 1 else 0 }
+        ocr.close()
+        return "端到端 OCR（small，4 线程）：加载 $loadMs ms，预热 $warmMs ms；整屏 $all 框 $allMs ms；" +
+            "下 1/4 屏 $part 框 $partMs ms；单行只识别 $lineMs ms"
     }
 
     private fun bench(dir: File, threads: Int): String {

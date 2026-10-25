@@ -7,3 +7,7 @@ local.properties
 captures/
 # probe output contains real screen content
 tools/probe/out/
+PROJECT_STATE.md
+.venv/
+# OCR models are fetched by :app:fetchOcrModels (pinned, SHA-256 checked)
+app/src/main/assets/ocr/*.onnx

@@ -40,9 +40,13 @@ class Pixels(val width: Int, val height: Int, val argb: IntArray) {
 
 data class TextHit(val text: String, val bounds: Box, val confidence: Float)
 
-/** OCR sits behind this so the model or backend can change (M3). */
-fun interface TextRecognizer {
-    fun recognize(region: Box?): List<TextHit>
+/** OCR sits behind this so the model or backend can change. Boxes are in screen pixels. */
+interface TextRecognizer {
+    /** Detects and reads every line in [region] (the whole screenshot when null). */
+    fun recognize(pixels: Pixels, region: Box?): List<TextHit>
+
+    /** Reads one line already located at [region]: recognition only, no detection. */
+    fun readLine(pixels: Pixels, region: Box): TextHit?
 }
 
 /**
@@ -66,11 +70,24 @@ class Frame(
     val screenshot: Pixels? by lazy { shooter?.invoke() }
 
     private val ocrCache = HashMap<Box?, List<TextHit>>()
+    private val lineCache = HashMap<Box, TextHit?>()
 
     fun nodes(): Sequence<UiNode> = tree?.walk() ?: emptySequence()
 
-    fun ocr(region: Box? = null): List<TextHit> =
-        recognizer?.let { ocrCache.getOrPut(region) { it.recognize(region) } } ?: emptyList()
+    /** OCR of [region], or nothing when this run has no OCR (packs that don't need it). */
+    fun ocr(region: Box? = null): List<TextHit> {
+        val reader = recognizer ?: return emptyList()
+        val pixels = screenshot ?: return emptyList()
+        return ocrCache.getOrPut(region) { reader.recognize(pixels, region) }
+    }
+
+    /** The one line of text at [region], recognition only. */
+    fun ocrLine(region: Box): TextHit? {
+        val reader = recognizer ?: return null
+        val pixels = screenshot ?: return null
+        if (region !in lineCache) lineCache[region] = reader.readLine(pixels, region)
+        return lineCache[region]
+    }
 }
 
 private val ids = AtomicLong()

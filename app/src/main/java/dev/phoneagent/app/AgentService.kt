@@ -3,6 +3,7 @@ package dev.phoneagent.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -20,8 +21,11 @@ import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Target
+import dev.phoneagent.core.run.Pixels
 import dev.phoneagent.core.run.UiNode
 import java.util.IdentityHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The accessibility service, and the [Device] the runner drives. Reads the window
@@ -81,7 +85,37 @@ class AgentService : AccessibilityService(), Device {
             while (toasts.isNotEmpty() && toasts.first().first < since) toasts.removeFirst()
             toasts.map { it.second }
         }
-        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId)
+        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId, shooter = { screenshot(displayId) })
+    }
+
+    /**
+     * Blocks the calling worker thread for one screenshot. Null when the system refuses,
+     * e.g. too soon after the previous one; the pixels stay in memory only.
+     */
+    private fun screenshot(displayId: Int): Pixels? {
+        val done = CountDownLatch(1)
+        var pixels: Pixels? = null
+        takeScreenshot(displayId, mainExecutor, object : TakeScreenshotCallback {
+            override fun onSuccess(result: ScreenshotResult) {
+                result.hardwareBuffer.use { buffer ->
+                    val bitmap = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                    if (bitmap != null) {
+                        val argb = IntArray(bitmap.width * bitmap.height)
+                        bitmap.getPixels(argb, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                        pixels = Pixels(bitmap.width, bitmap.height, argb)
+                        bitmap.recycle()
+                    }
+                }
+                done.countDown()
+            }
+
+            override fun onFailure(errorCode: Int) {
+                Log.i("PhoneAgent", "screenshot failed: $errorCode")
+                done.countDown()
+            }
+        })
+        done.await(SCREENSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        return pixels
     }
 
     override fun launch(packageName: String): Boolean {
@@ -212,6 +246,7 @@ class AgentService : AccessibilityService(), Device {
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 8_000L
+        private const val SCREENSHOT_TIMEOUT_MS = 3_000L
         private const val LAUNCH_POLL_MS = 300L
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }

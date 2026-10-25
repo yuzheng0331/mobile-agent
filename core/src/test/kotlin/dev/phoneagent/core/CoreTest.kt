@@ -8,6 +8,7 @@ import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Outcome
+import dev.phoneagent.core.run.Pixels
 import dev.phoneagent.core.run.RunObserver
 import dev.phoneagent.core.run.Runner
 import dev.phoneagent.core.run.StepTrace
@@ -311,6 +312,17 @@ class CoreTest {
         assertEquals("qq-latest-to-douyin", route("帮我复制 QQ 最新消息！", listOf(qqPack))?.id)
         assertNull(route("打开微信", listOf(qqPack)))
         assertNull(route("", listOf(qqPack)))
+    }
+
+    @Test
+    fun `frame takes its screenshot only when asked, once, and frames get growing ids`() {
+        var shots = 0
+        val frame = Frame("p", null, shooter = { shots++; Pixels(2, 1, intArrayOf(1, 2)) })
+        assertEquals(0, shots)
+        assertEquals(2, frame.screenshot!![1, 0])
+        frame.screenshot
+        assertEquals(1, shots)
+        assertTrue(Frame("p", null).id > frame.id)
     }
 
     @Test

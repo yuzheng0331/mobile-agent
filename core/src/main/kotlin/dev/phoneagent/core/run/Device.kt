@@ -1,12 +1,19 @@
 package dev.phoneagent.core.run
 
+/** Produces one [Frame] per round: the tree now, the screenshot and OCR when first asked for. */
+fun interface Perception {
+    fun capture(displayId: Int): Frame
+}
+
 /**
  * The phone as the runner sees it. `AgentService` implements it on Android; tests
  * use a scripted fake. Calls may block, so the runner never runs on the UI thread.
  * `displayId` stays 0 in v1 and is the hook for a later virtual-display mode.
  */
-interface Device {
-    fun capture(displayId: Int = 0): Frame
+interface Device : Perception {
+    override fun capture(displayId: Int): Frame
+
+    fun capture(): Frame = capture(0)
 
     fun launch(packageName: String): Boolean
 

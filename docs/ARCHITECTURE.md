@@ -64,7 +64,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 | 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
-| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。`Perception` 接口、`TreePerception`、`ScreenshotOcrPerception` 和 `Frame.id` 都在 M3（微信要 OCR，那时才有第二种感知方式） |
+| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。M3 已有：`Perception` 接口（`Device` 继承它）、`Frame.id`、`Frame.screenshot`（第一次用到时才截图，只在内存里）；`AgentService` 一个类同时读树和截图，不拆成 `TreePerception` / `ScreenshotOcrPerception` 两个类。OCR 识别器待接 |
 | `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc`（可 `exact`）`id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数）`lastMessage`（聊天区最下面一条消息气泡，跳过整行宽的系统提示） | 锚点叫 `in` 还是 `under` 待定；`ocrText`、`region` 在 M3；预留 `template` |
 | `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
 | `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |

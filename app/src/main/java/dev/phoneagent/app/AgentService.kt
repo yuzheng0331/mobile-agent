@@ -13,7 +13,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityWindowInfo
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
@@ -82,17 +81,8 @@ class AgentService : AccessibilityService(), Device {
             while (toasts.isNotEmpty() && toasts.first().first < since) toasts.removeFirst()
             toasts.map { it.second }
         }
-        return Frame(foreground(), tree, recent, displayId)
+        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId)
     }
-
-    /**
-     * The app in front: the topmost application window's package, else the active window's.
-     * Quark's camera page leaves the active window without its package, so that alone fails.
-     */
-    private fun foreground(): String? =
-        windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.maxByOrNull { it.layer }
-            ?.root?.packageName?.toString()
-            ?: rootInActiveWindow?.packageName?.toString()
 
     override fun launch(packageName: String): Boolean {
         // shortcut: main display only; a virtual display would pass ActivityOptions.setLaunchDisplayId.
@@ -103,16 +93,17 @@ class AgentService : AccessibilityService(), Device {
         var asked = false
         try {
             while (nowMs() < deadline) {
-                if (foreground() == packageName) return true
+                if (rootInActiveWindow?.packageName == packageName) return true
                 // vivo blocks taps on this dialog from accessibility (node clicks and gestures), so ask the user.
                 if (!asked && jumpDialogShown()) {
                     asked = true
                     deadline = nowMs() + USER_CONFIRM_TIMEOUT_MS
                     showHint("Phone Agent：请在下方弹窗里点“始终打开”，任务会继续")
                 }
-                awaitSettle(deadline - nowMs())
+                // Short slices: a live camera preview never goes quiet, so a full settle would eat the whole timeout.
+                awaitSettle(minOf(LAUNCH_POLL_MS, deadline - nowMs()))
             }
-            Log.i("PhoneAgent", "launch $packageName timed out; active=${rootInActiveWindow?.packageName} top=${foreground()}")
+            Log.i("PhoneAgent", "launch $packageName timed out; active=${rootInActiveWindow?.packageName}")
             return false
         } finally {
             if (asked) hideHint()
@@ -220,6 +211,7 @@ class AgentService : AccessibilityService(), Device {
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 8_000L
+        private const val LAUNCH_POLL_MS = 300L
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }
 }

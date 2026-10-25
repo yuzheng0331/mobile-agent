@@ -3,6 +3,7 @@ package dev.phoneagent.app
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
@@ -64,11 +65,15 @@ class MainActivity : Activity() {
             val lines = mutableListOf<String>()
             val result = Runner(device, observer = { trace ->
                 val line = timing(trace)
+                Log.i(TAG, "${pack.id} $line")
                 runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
             }).run(pack)
+            Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
             runOnUiThread { status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n") }
         }
     }
+
+    private companion object { const val TAG = "PhoneAgent" }
 
     private fun timing(it: StepTrace) =
         "第 ${it.index + 1} 步 ${it.action}：找 ${it.findMs} / 动 ${it.actMs} / 等 ${it.settleMs} / 查 ${it.checkMs} ms，${it.outcome}"

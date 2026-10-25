@@ -16,6 +16,8 @@ import dev.phoneagent.core.run.TextRecognizer
 import dev.phoneagent.core.run.UiNode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -184,6 +186,16 @@ class CoreTest {
         assertTrue(result.reason!!.endsWith("不是文字"))
         assertTrue(device.nowMs() >= 1000)
         assertEquals(emptyList(), device.actions)
+    }
+
+    @Test
+    fun `listItem picks the list with the most rows, not the pager around it`() {
+        // As on Quark's bookmarks page: a scrollable pager holds one page, the page holds the list.
+        val list = UiNode(className = "android.widget.ListView", bounds = Box(0, 263, 1080, 2220),
+            children = listOf(row(407, "书签1"), row(587, "书签2")))
+        val pager = UiNode(scrollable = true, bounds = Box(0, 263, 1080, 2400), children = listOf(UiNode(children = listOf(list))))
+        val hit = Builtins.registry.find(frame("com.quark.browser", pager), buildJsonObject { put("listItem", 0) })
+        assertEquals(407, hit!!.bounds.top)
     }
 
     @Test

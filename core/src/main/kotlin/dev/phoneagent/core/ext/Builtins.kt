@@ -50,20 +50,19 @@ object Builtins {
 
     /**
      * Item N (negative counts from the end) of a list: the direct children of the container
-     * found by `in`, or of the largest scrollable node (else the list view with the most rows),
+     * found by `in`, or of the scrollable node or list view with the most such children,
      * that hold something actionable, ordered top to bottom. The target is the item's largest
      * actionable node, innermost on a tie: QQ handles taps on an inner same-size row, and in
      * chats the message bubble rather than the (also long-clickable) avatar.
-     * shortcut: tuned on QQ 2026-10 trees only; recheck for WeChat (M3).
+     * shortcut: tuned on QQ and Quark 2026-10 trees only; recheck for WeChat (M3).
      */
     private fun listItem(frame: Frame, spec: JsonObject, registry: Registry): Target? {
         val index = spec.getValue("listItem").jsonPrimitive.int
         val container = spec["in"]?.let { registry.find(frame, it.jsonObject)?.node }
-            ?: frame.nodes().filter { it.scrollable }.maxByOrNull { it.bounds.area }
-            // A list that fits one screen is not scrollable (QQ with few chats); QQ also nests a
-            // same-size page RecyclerView around it, so pick the list view with the most rows.
-            ?: frame.nodes().filter { it.className?.endsWith("RecyclerView") == true || it.className?.endsWith("ListView") == true }
-                .maxByOrNull { list -> list.children.count { it.clickable || it.longClickable } }
+            // Not just the largest scrollable: QQ and Quark wrap the real list in a same-size pager,
+            // and a list that fits one screen is not scrollable (QQ with few chats).
+            ?: frame.nodes().filter { it.scrollable || it.className?.endsWith("RecyclerView") == true || it.className?.endsWith("ListView") == true }
+                .maxWithOrNull(compareBy<UiNode> { list -> list.children.count { it.walk().any(::actionable) } }.thenBy { it.bounds.area })
             ?: return null
         val items = container.children.filter { item -> item.walk().any(::actionable) }.sortedBy { it.bounds.top }
         val item = items.getOrNull(if (index < 0) items.size + index else index) ?: return null

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "quark-first-bookmark",
+  "version": "0.1.0",
+  "author": "phone-agent",
+  "aliases": ["打开夸克第一个书签", "夸克书签第一个网站"],
+  "requires": ["com.quark.browser"],
+  "steps": [
+    {"do": "launch", "app": "com.quark.browser", "expect": {"anyText": ["多窗口"], "gone": ["返回主页"]}},
+    {"do": "tap",
+     "target": {"intent": "首页的“书签”入口", "find": [{"text": "书签", "exact": true}]},
+     "expect": {"anyText": ["新建文件夹"]},
+     "ifMissing": "夸克首页没有“书签”入口：请先在首页添加“书签”"},
+    {"do": "tap",
+     "target": {"intent": "书签列表第一项（第一行是搜索框）", "find": [{"listItem": 1}]},
+     "expect": {"anyText": ["返回主页"]},
+     "ifMissing": "书签里没有网站"}
+  ]
+}

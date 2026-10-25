@@ -31,8 +31,9 @@ data class OcrConfig(
     val recBatch: Int = 6,
     val detThreads: Int = 4,
     val recThreads: Int = 4,
-    /** Where inference runs. XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
-    val provider: OcrProvider = OcrProvider.CPU,
+    /** Where each graph runs (the two phases' times add up, so each can take its fastest). XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
+    val detProvider: OcrProvider = OcrProvider.CPU,
+    val recProvider: OcrProvider = OcrProvider.CPU,
 )
 
 enum class OcrProvider { CPU, XNNPACK, NNAPI }
@@ -56,8 +57,8 @@ class PpOcr(
 ) : TextRecognizer, AutoCloseable {
 
     private val env = OrtEnvironment.getEnvironment()
-    private val detOptions = options(config.detThreads, config.provider)
-    private val recOptions = options(config.recThreads, config.provider)
+    private val detOptions = options(config.detThreads, config.detProvider)
+    private val recOptions = options(config.recThreads, config.recProvider)
     private val det = env.createSession(det, detOptions)
     private val rec = env.createSession(rec, recOptions)
     val timings = OcrTimings()

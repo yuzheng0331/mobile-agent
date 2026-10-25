@@ -19,6 +19,10 @@ import java.io.File
  * adb) for every combination of the speed knobs, splitting each run into phases. Logs box
  * counts and times only, never the text. Start it with
  * `adb shell am start -n dev.phoneagent.app/.OcrBenchActivity`; keep the screen on.
+ *
+ * Extras narrow the grid, e.g. `--es providers NNAPI+NNAPI,XNNPACK+CPU --es sides 0,1280
+ * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
+ * crashes takes the process with it, so run those alone.
  */
 class OcrBenchActivity : Activity() {
 
@@ -28,17 +32,27 @@ class OcrBenchActivity : Activity() {
         super.onCreate(savedInstanceState)
         out = TextView(this).apply { setPadding(48, 96, 48, 48); text = "测速中…" }
         setContentView(out)
+        fun list(name: String) = intent.getStringExtra(name)?.split(",")?.map { it.trim() }
+        val providers = list("providers")?.map { pair -> pair.split("+").map(OcrProvider::valueOf).let { it[0] to it[1] } }
+            ?: OcrProvider.entries.map { it to it }
+        val sides = list("sides")?.map { it.toInt().takeIf { side -> side > 0 } } ?: DET_SIDES
+        val batches = list("batches")?.map { it.toInt() } ?: REC_BATCHES
         Thread {
-            val lines = mutableListOf(screenshots())
-            runCatching { ocrGrid(lines) }.onFailure { lines += "OCR 出错：$it" }
-            lines.forEach { Log.i(TAG, it) }
-            runOnUiThread { out.text = lines.joinToString("\n\n") }
+            val lines = mutableListOf<String>()
+            fun log(line: String) {
+                lines += line
+                Log.i(TAG, line)
+                runOnUiThread { out.text = lines.joinToString("\n\n") }
+            }
+            log(screenshots())
+            runCatching { ocrGrid(providers, sides, batches, ::log) }.onFailure { log("OCR 出错：$it") }
+            log("测速结束")
         }.start()
     }
 
-    private fun ocrGrid(lines: MutableList<String>) {
+    private fun ocrGrid(providers: List<Pair<OcrProvider, OcrProvider>>, sides: List<Int?>, batches: List<Int>, log: (String) -> Unit) {
         val file = File(getExternalFilesDir(null), "ocr/screen.png")
-        if (!file.isFile) return run { lines += "OCR：没有 ${file.path}" }
+        if (!file.isFile) return log("OCR：没有 ${file.path}")
         val bitmap = BitmapFactory.decodeFile(file.path)
         val screen = Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
             bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
@@ -48,11 +62,14 @@ class OcrBenchActivity : Activity() {
         val rec = bytes("rec.onnx")
         val dict = assets.open("ocr/dict.txt").bufferedReader().readLines()
         // What the CPU read at the same side and batch: other providers must read the same.
+        // Only meaningful when a CPU+CPU run of that side and batch came first in this run.
         val cpu = mutableMapOf<Pair<Int?, Int>, Set<Pair<String, Box>>>()
-        for (provider in OcrProvider.entries) for (side in DET_SIDES) for (batch in REC_BATCHES) {
-            val config = OcrConfig(detMaxSide = side, recBatch = batch, provider = provider)
-            var line = "$provider / 检测边长 ${side ?: "原图"} / 每批 $batch："
-            line += runCatching {
+        for ((detProvider, recProvider) in providers) for (side in sides) for (batch in batches) {
+            val config = OcrConfig(detMaxSide = side, recBatch = batch, detProvider = detProvider, recProvider = recProvider)
+            val name = "检测 $detProvider + 识别 $recProvider / 检测边长 ${side ?: "原图"} / 每批 $batch"
+            // Logged first so a native crash still shows which combination it was.
+            Log.i(TAG, "开始 $name")
+            log("$name：" + runCatching {
                 var start = SystemClock.uptimeMillis()
                 PpOcr(det, rec, dict, config).use { ocr ->
                     val loadMs = SystemClock.uptimeMillis() - start
@@ -66,7 +83,8 @@ class OcrBenchActivity : Activity() {
                         Triple(SystemClock.uptimeMillis() - t, hits, ocr.timings.toString())
                     }.sortedBy { it.first }
                     val (ms, hits, split) = runs[RUNS / 2]
-                    val same = cpu.getOrPut(side to batch) { hits }.let { base -> "与 CPU 相同 ${hits.count { it in base }}/${base.size}" }
+                    val base = if (detProvider == OcrProvider.CPU && recProvider == OcrProvider.CPU) cpu.getOrPut(side to batch) { hits } else cpu[side to batch]
+                    val same = base?.let { b -> "与 CPU 相同 ${hits.count { it in b }}/${b.size}" } ?: "没有 CPU 基准"
                     var text = "整屏 ${hits.size} 框 $ms ms（$split）；$same；加载 $loadMs，预热 $warmMs ms"
                     if (config == OcrConfig()) {
                         val band = Box(0, screen.height * 3 / 4, screen.width, screen.height)
@@ -76,9 +94,7 @@ class OcrBenchActivity : Activity() {
                     }
                     text
                 }
-            }.getOrElse { "出错 ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
-            lines += line
-            Log.i(TAG, line)
+            }.getOrElse { "出错 ${it.javaClass.simpleName}: ${it.message?.take(160)}" })
         }
     }
 

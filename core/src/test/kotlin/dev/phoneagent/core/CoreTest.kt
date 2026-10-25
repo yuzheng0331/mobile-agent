@@ -55,7 +55,7 @@ private val QQ = "com.tencent.mobileqq"
 // As on a real QQ with few chats: the list fits one screen (not scrollable), sits inside a same-size
 // page RecyclerView, and its first row is the search bar.
 private const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
-private val qqList = frame(QQ,
+private val qqList = frame(QQ, UiNode(text = "消息", clickable = true, bounds = Box(0, 2300, 270, 2400)),
     UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400), children = listOf(UiNode(children = listOf(
         UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400),
             children = listOf(row(400, "会话B"), row(212, "搜索").copy(desc = "搜索"), row(250, "会话A"))))))))
@@ -99,15 +99,15 @@ class CoreTest {
 
     @Test
     fun `qq pack runs end to end on scripted frames`() {
-        val device = FakeDevice(douyin, qqList, qqChat, qqMenu, qqChat, douyin)
+        val device = FakeDevice(douyin, qqList, qqList, qqChat, qqMenu, qqChat, douyin)
         val seen = mutableListOf<StepTrace>()
         val result = Runner(device, observer = { seen += it }).run(qqPack)
         assertTrue(result.ok, result.reason)
         assertEquals(result.steps, seen)
-        assertEquals(listOf("launch $QQ", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
+        assertEquals(listOf("launch $QQ", "tap", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
         // listItem 0 is the topmost row, -1 the bottom-most message
-        assertEquals(250, result.steps[1].bounds!!.top) // row 1: row 0 is the search bar
-        assertEquals(Box(140, 940, 810, 1300), result.steps[2].bounds) // the bubble, not the avatar
+        assertEquals(250, result.steps[2].bounds!!.top) // row 1: row 0 is the search bar
+        assertEquals(Box(140, 940, 810, 1300), result.steps[3].bounds) // the bubble, not the avatar
     }
 
     @Test

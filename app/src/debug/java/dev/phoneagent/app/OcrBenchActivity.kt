@@ -1,27 +1,24 @@
 package dev.phoneagent.app
 
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
 import android.app.Activity
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.widget.TextView
+import dev.phoneagent.core.ocr.OcrConfig
+import dev.phoneagent.core.ocr.OcrProvider
 import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Pixels
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
 
 /**
- * Debug only: times PP-OCR inference for every model folder pushed to `files/ocr/<name>/`
- * (det.onnx + rec.onnx), at 2 and 4 threads, and the screenshot cost and minimum interval. Inference time does not depend on what the
- * image shows, so a blank full-screen input stands in for a screenshot. Pre/post-processing
- * is not ported. Start it with `adb shell am start -n dev.phoneagent.app/.OcrBenchActivity`.
+ * Debug only: the phone side of the OCR experiments. Measures the screenshot cost and minimum
+ * interval, then runs the shipped OCR on `files/ocr/screen.png` (a real screenshot pushed with
+ * adb) for every combination of the speed knobs, splitting each run into phases. Logs box
+ * counts and times only, never the text. Start it with
+ * `adb shell am start -n dev.phoneagent.app/.OcrBenchActivity`; keep the screen on.
  */
 class OcrBenchActivity : Activity() {
 
@@ -32,65 +29,56 @@ class OcrBenchActivity : Activity() {
         out = TextView(this).apply { setPadding(48, 96, 48, 48); text = "测速中…" }
         setContentView(out)
         Thread {
-            val dirs = File(getExternalFilesDir(null), "ocr").listFiles { f -> File(f, "det.onnx").isFile }.orEmpty().sortedBy { it.name }
-            val shots = screenshots()
-            val e2e = runCatching { endToEnd() }.getOrElse { "端到端 OCR 出错：$it" }
-            val lines = listOf(shots, e2e) + if (dirs.isEmpty()) listOf("没有模型：把 det.onnx / rec.onnx 推到 ${getExternalFilesDir(null)}/ocr/<名字>/")
-            else dirs.flatMap { dir -> THREADS.map { t -> runCatching { bench(dir, t) }.getOrElse { "${dir.name} t=$t 出错：$it" } } }
+            val lines = mutableListOf(screenshots())
+            runCatching { ocrGrid(lines) }.onFailure { lines += "OCR 出错：$it" }
             lines.forEach { Log.i(TAG, it) }
             runOnUiThread { out.text = lines.joinToString("\n\n") }
         }.start()
     }
 
-    /**
-     * The shipped OCR (assets, PpOcr, 4 threads) end to end on `files/ocr/screen.png`, a real
-     * screenshot pushed with adb: whole screen, a quarter-height band, and one line. Logs box
-     * counts and times only, never the text.
-     */
-    private fun endToEnd(): String {
+    private fun ocrGrid(lines: MutableList<String>) {
         val file = File(getExternalFilesDir(null), "ocr/screen.png")
-        if (!file.isFile) return "端到端 OCR：没有 ${file.path}"
+        if (!file.isFile) return run { lines += "OCR：没有 ${file.path}" }
         val bitmap = BitmapFactory.decodeFile(file.path)
         val screen = Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
             bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         })
         fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
-        var start = SystemClock.uptimeMillis()
-        val ocr = PpOcr(bytes("det.onnx"), bytes("rec.onnx"), assets.open("ocr/dict.txt").bufferedReader().readLines())
-        val loadMs = SystemClock.uptimeMillis() - start
-        start = SystemClock.uptimeMillis()
-        ocr.warmUp(screen.width, screen.height)
-        val warmMs = SystemClock.uptimeMillis() - start
-        fun timed(block: () -> Int): Pair<Int, Long> {
-            val runs = List(3) { val t = SystemClock.uptimeMillis(); block() to SystemClock.uptimeMillis() - t }
-            return runs.first().first to runs.map { it.second }.sorted()[1]
-        }
-        val (all, allMs) = timed { ocr.recognize(screen, null).size }
-        val band = Box(0, screen.height * 3 / 4, screen.width, screen.height)
-        val (part, partMs) = timed { ocr.recognize(screen, band).size }
-        val line = ocr.recognize(screen, null).first().bounds
-        val (_, lineMs) = timed { if (ocr.readLine(screen, line) != null) 1 else 0 }
-        ocr.close()
-        return "端到端 OCR（small，4 线程）：加载 $loadMs ms，预热 $warmMs ms；整屏 $all 框 $allMs ms；" +
-            "下 1/4 屏 $part 框 $partMs ms；单行只识别 $lineMs ms"
-    }
-
-    private fun bench(dir: File, threads: Int): String {
-        val env = OrtEnvironment.getEnvironment()
-        val options = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(threads)
-            addConfigEntry("session.intra_op.allow_spinning", "0")
-        }
-        val loadStart = SystemClock.uptimeMillis()
-        env.createSession(File(dir, "det.onnx").path, options).use { det ->
-            env.createSession(File(dir, "rec.onnx").path, options).use { rec ->
-                val loadMs = SystemClock.uptimeMillis() - loadStart
-                val detMs = time(env, det, longArrayOf(1, 3, DET_HEIGHT, DET_WIDTH))
-                val batches = (REC_LINES + REC_BATCH - 1) / REC_BATCH
-                val recMs = time(env, rec, longArrayOf(REC_BATCH.toLong(), 3, REC_HEIGHT, REC_WIDTH)) * batches
-                return "${dir.name} t=$threads 加载 $loadMs ms，检测 ${DET_WIDTH}x$DET_HEIGHT $detMs ms，" +
-                    "识别 $REC_LINES 行 $recMs ms，合计 ${detMs + recMs} ms"
-            }
+        val det = bytes("det.onnx")
+        val rec = bytes("rec.onnx")
+        val dict = assets.open("ocr/dict.txt").bufferedReader().readLines()
+        // What the CPU read at the same side and batch: other providers must read the same.
+        val cpu = mutableMapOf<Pair<Int?, Int>, Set<Pair<String, Box>>>()
+        for (provider in OcrProvider.entries) for (side in DET_SIDES) for (batch in REC_BATCHES) {
+            val config = OcrConfig(detMaxSide = side, recBatch = batch, provider = provider)
+            var line = "$provider / 检测边长 ${side ?: "原图"} / 每批 $batch："
+            line += runCatching {
+                var start = SystemClock.uptimeMillis()
+                PpOcr(det, rec, dict, config).use { ocr ->
+                    val loadMs = SystemClock.uptimeMillis() - start
+                    start = SystemClock.uptimeMillis()
+                    ocr.warmUp(screen.width, screen.height)
+                    val warmMs = SystemClock.uptimeMillis() - start
+                    // Median of RUNS whole-screen runs, with that run's phase split.
+                    val runs = List(RUNS) {
+                        val t = SystemClock.uptimeMillis()
+                        val hits = ocr.recognize(screen, null).map { it.text to it.bounds }.toSet()
+                        Triple(SystemClock.uptimeMillis() - t, hits, ocr.timings.toString())
+                    }.sortedBy { it.first }
+                    val (ms, hits, split) = runs[RUNS / 2]
+                    val same = cpu.getOrPut(side to batch) { hits }.let { base -> "与 CPU 相同 ${hits.count { it in base }}/${base.size}" }
+                    var text = "整屏 ${hits.size} 框 $ms ms（$split）；$same；加载 $loadMs，预热 $warmMs ms"
+                    if (config == OcrConfig()) {
+                        val band = Box(0, screen.height * 3 / 4, screen.width, screen.height)
+                        start = SystemClock.uptimeMillis()
+                        val part = ocr.recognize(screen, band).size
+                        text += "；下 1/4 屏 $part 框 ${SystemClock.uptimeMillis() - start} ms"
+                    }
+                    text
+                }
+            }.getOrElse { "出错 ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
+            lines += line
+            Log.i(TAG, line)
         }
     }
 
@@ -117,36 +105,14 @@ class OcrBenchActivity : Activity() {
         return "截图：成功 $SHOTS 次，期间被拒 $refused 次；单次耗时 $costs ms；成功之间的间隔 ${okAt.zipWithNext { a, b -> b - a }} ms"
     }
 
-    /** Median of [RUNS] runs after one warm-up. */
-    private fun time(env: OrtEnvironment, session: OrtSession, shape: LongArray): Long {
-        val input = floatBuffer(shape.fold(1L, Long::times).toInt())
-        return OnnxTensor.createTensor(env, input, shape).use { tensor ->
-            val feed = mapOf(session.inputNames.first() to tensor)
-            session.run(feed).close()
-            List(RUNS) {
-                val start = SystemClock.uptimeMillis()
-                session.run(feed).close()
-                SystemClock.uptimeMillis() - start
-            }.sorted()[RUNS / 2]
-        }
-    }
-
-    private fun floatBuffer(size: Int): FloatBuffer =
-        ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-
     private companion object {
         const val TAG = "PhoneAgent"
-        val THREADS = listOf(2, 4)
-        const val RUNS = 5
         const val SHOTS = 6
         const val RETRY_MS = 50L
-        // Full 1080x2400 screen, rounded to multiples of 32 like the Python engine (no downscaling).
-        const val DET_WIDTH = 1088L
-        const val DET_HEIGHT = 2400L
-        // About 40 text boxes on the WeChat list and menu screenshots.
-        const val REC_LINES = 40
-        const val REC_BATCH = 6
-        const val REC_HEIGHT = 48L
-        const val REC_WIDTH = 320L
+        const val RUNS = 3
+        // Every combination, not one knob at a time. Threads stay at 4 + 4: on 2026-10-26 det and
+        // rec times each depended only on their own thread count, and 4 beat 2, 6 and 8 for both.
+        val DET_SIDES = listOf<Int?>(null, 1280, 960)
+        val REC_BATCHES = listOf(6, 1, 12)
     }
 }

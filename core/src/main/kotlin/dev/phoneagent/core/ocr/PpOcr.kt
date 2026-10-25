@@ -10,26 +10,57 @@ import dev.phoneagent.core.run.TextRecognizer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.stream.IntStream
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
 /**
+ * The knobs the accuracy and speed experiments sweep; the defaults are the current choice.
+ * Accuracy ones are compared in every combination on the PC, speed ones on the phone.
+ */
+data class OcrConfig(
+    /** Mean probability a detected region needs to be kept (gui-agent 0.6; OneDragon uses 0.45 for v6). */
+    val boxThresh: Double = 0.6,
+    /** How far a detected region is grown before cropping (DB unclip ratio). */
+    val unclipRatio: Double = 1.5,
+    /** Longest side of the detection input; larger areas are scaled down. Null keeps full resolution. */
+    val detMaxSide: Int? = null,
+    /** Lines per recognition run; lines in a run are padded to the widest. */
+    val recBatch: Int = 6,
+    val detThreads: Int = 4,
+    val recThreads: Int = 4,
+    /** Where inference runs. XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
+    val provider: OcrProvider = OcrProvider.CPU,
+)
+
+enum class OcrProvider { CPU, XNNPACK, NNAPI }
+
+/** Where the time of the last call went, in ms; for the speed experiments. */
+class OcrTimings {
+    var detPrep = 0L; var detRun = 0L; var boxes = 0L; var recPrep = 0L; var recRun = 0L; var decode = 0L
+    override fun toString() = "检测预处理 $detPrep / 检测推理 $detRun / 找框 $boxes / 识别预处理 $recPrep / 识别推理 $recRun / 解码 $decode ms"
+}
+
+/**
  * PP-OCR detection + recognition on two ONNX Runtime sessions: a port of gui-agent's Python
  * engine (same preprocessing, DB post-processing and CTC greedy decoding), checked against
  * it on real screenshots. One instance per process; calls are serialized.
  */
-class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: Int = 4) : TextRecognizer, AutoCloseable {
+class PpOcr(
+    det: ByteArray,
+    rec: ByteArray,
+    dictionary: List<String>,
+    private val config: OcrConfig = OcrConfig(),
+) : TextRecognizer, AutoCloseable {
 
     private val env = OrtEnvironment.getEnvironment()
-    private val options = OrtSession.SessionOptions().apply {
-        setIntraOpNumThreads(threads)
-        // An idle pool that spins steals cores from the app being driven; sleeping measured faster.
-        addConfigEntry("session.intra_op.allow_spinning", "0")
-    }
-    private val det = env.createSession(det, options)
-    private val rec = env.createSession(rec, options)
+    private val detOptions = options(config.detThreads, config.provider)
+    private val recOptions = options(config.recThreads, config.provider)
+    private val det = env.createSession(det, detOptions)
+    private val rec = env.createSession(rec, recOptions)
+    val timings = OcrTimings()
     private val detInput = this.det.inputNames.first()
     private val recInput = this.rec.inputNames.first()
     private val alphabet = listOf("blank") + dictionary + " "
@@ -39,6 +70,7 @@ class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: I
 
     @Synchronized
     override fun recognize(pixels: Pixels, region: Box?): List<TextHit> {
+        timings.apply { detPrep = 0; detRun = 0; boxes = 0; recPrep = 0; recRun = 0; decode = 0 }
         val area = clip(region ?: Box(0, 0, pixels.width, pixels.height), pixels) ?: return emptyList()
         val boxes = detect(pixels, area)
         return boxes.zip(read(pixels, boxes)).mapNotNull { (box, line) -> line?.let { TextHit(it.first, box, it.second) } }
@@ -53,36 +85,45 @@ class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: I
     /** Runs both graphs once at the given screen size, so the first real call doesn't pay for setup. */
     @Synchronized
     fun warmUp(width: Int, height: Int) {
-        val (w, h) = detSize(width, height)
+        val (w, h) = detSize(width, height, config.detMaxSide)
         run(det, detInput, floatBuffer(3 * w * h), longArrayOf(1, 3, h.toLong(), w.toLong())) {}
-        run(rec, recInput, floatBuffer(REC_BATCH * 3 * REC_HEIGHT * REC_BASE_WIDTH),
-            longArrayOf(REC_BATCH.toLong(), 3, REC_HEIGHT.toLong(), REC_BASE_WIDTH.toLong())) {}
+        run(rec, recInput, floatBuffer(config.recBatch * 3 * REC_HEIGHT * REC_BASE_WIDTH),
+            longArrayOf(config.recBatch.toLong(), 3, REC_HEIGHT.toLong(), REC_BASE_WIDTH.toLong())) {}
     }
 
     override fun close() {
         det.close()
         rec.close()
-        options.close()
+        detOptions.close()
+        recOptions.close()
     }
 
     private fun detect(src: Pixels, area: Box): List<Box> {
         val width = area.right - area.left
         val height = area.bottom - area.top
-        val (w, h) = detSize(width, height)
+        val (w, h) = detSize(width, height, config.detMaxSide)
         val size = 3 * w * h
         if (detBuffer.capacity() < size) detBuffer = floatBuffer(size)
         val input = detBuffer.duplicate().apply { position(0); limit(size) }.slice()
+        var t = System.nanoTime()
         resize(src, area, w, h, input, 0, w, w * h, DET_MEAN, DET_STD)
+        timings.detPrep += lap(t).also { t = System.nanoTime() }
         val prob = run(det, detInput, input, longArrayOf(1, 3, h.toLong(), w.toLong())) { it }
-        return boxesFrom(prob, w, h, width, height).map { Box(it.left + area.left, it.top + area.top, it.right + area.left, it.bottom + area.top) }
+        timings.detRun += lap(t).also { t = System.nanoTime() }
+        return boxesFrom(prob, w, h, width, height, config.boxThresh, config.unclipRatio)
+            .map { Box(it.left + area.left, it.top + area.top, it.right + area.left, it.bottom + area.top) }
+            .also { timings.boxes += lap(t) }
     }
 
     /** Text and mean confidence per box (null when nothing was read), batched by aspect ratio. */
     private fun read(src: Pixels, boxes: List<Box>): List<Pair<String, Float>?> {
+        var t = System.nanoTime()
         val crops = boxes.map { crop(src, it) }
+        timings.recPrep += lap(t)
         val ratio = { i: Int -> crops[i].width.toDouble() / crops[i].height }
         val lines = arrayOfNulls<Pair<String, Float>>(crops.size)
-        for (batch in crops.indices.sortedBy(ratio).chunked(REC_BATCH)) {
+        for (batch in crops.indices.sortedBy(ratio).chunked(config.recBatch)) {
+            t = System.nanoTime()
             val batchW = (REC_HEIGHT * max(REC_BASE_WIDTH.toDouble() / REC_HEIGHT, batch.maxOf(ratio))).toInt()
             val plane = REC_HEIGHT * batchW
             // Zero padding to the right of narrower crops, as in PaddleOCR.
@@ -93,10 +134,16 @@ class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: I
                 resize(c, Box(0, 0, c.width, c.height), w, REC_HEIGHT, input, slot * 3 * plane, batchW, plane, REC_MEAN, REC_STD)
             }
             val shape = longArrayOf(batch.size.toLong(), 3, REC_HEIGHT.toLong(), batchW.toLong())
+            timings.recPrep += lap(t).also { t = System.nanoTime() }
             run(rec, recInput, input, shape) { scores ->
+                timings.recRun += lap(t).also { t = System.nanoTime() }
                 val perSlot = scores.size / batch.size
                 check(perSlot % alphabet.size == 0) { "dictionary does not match the recognition model" }
-                batch.forEachIndexed { slot, i -> lines[i] = ctcDecode(scores, slot * perSlot, perSlot / alphabet.size, alphabet.size, alphabet) }
+                // Each step is an argmax over the whole dictionary; lines are independent.
+                IntStream.range(0, batch.size).parallel().forEach { slot ->
+                    lines[batch[slot]] = ctcDecode(scores, slot * perSlot, perSlot / alphabet.size, alphabet.size, alphabet)
+                }
+                timings.decode += lap(t)
             }
         }
         return lines.toList()
@@ -105,8 +152,9 @@ class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: I
     private inline fun <T> run(session: OrtSession, name: String, input: FloatBuffer, shape: LongArray, use: (FloatArray) -> T): T =
         OnnxTensor.createTensor(env, input, shape).use { tensor ->
             session.run(mapOf(name to tensor)).use { result ->
+                // floatBuffer is already a copy into a heap array (a recognition batch can be tens of MB); use it as is.
                 val out = (result[0] as OnnxTensor).floatBuffer
-                use(FloatArray(out.remaining()).also { out.get(it) })
+                use(if (out.hasArray() && out.arrayOffset() == 0) out.array() else FloatArray(out.remaining()).also { out.get(it) })
             }
         }
 
@@ -117,22 +165,39 @@ class PpOcr(det: ByteArray, rec: ByteArray, dictionary: List<String>, threads: I
         val REC_STD = floatArrayOf(0.5f, 0.5f, 0.5f)
         const val REC_HEIGHT = 48
         const val REC_BASE_WIDTH = 320
-        const val REC_BATCH = 6
+
+        fun options(threads: Int, provider: OcrProvider) = OrtSession.SessionOptions().apply {
+            // XNNPACK brings its own pool; ORT's then only runs the ops XNNPACK lacks (ORT docs: keep it at 1).
+            setIntraOpNumThreads(if (provider == OcrProvider.XNNPACK) 1 else threads)
+            // An idle pool that spins steals cores from the app being driven; sleeping measured faster.
+            addConfigEntry("session.intra_op.allow_spinning", "0")
+            when (provider) {
+                OcrProvider.CPU -> {}
+                OcrProvider.XNNPACK -> addXnnpack(mapOf("intra_op_num_threads" to "$threads"))
+                OcrProvider.NNAPI -> addNnapi()
+            }
+        }
+
+        fun lap(start: Long) = (System.nanoTime() - start) / 1_000_000
     }
 }
 
 private const val DET_MIN_SIDE = 64
 private const val DET_MAX_SIDE = 4000
 private const val DB_THRESH = 0.3f
-private const val DB_BOX_THRESH = 0.6
 private const val DB_MAX_CANDIDATES = 1000
-private const val DB_UNCLIP_RATIO = 1.5
 private const val DB_MIN_SIZE = 3.0
+// The Neo5's four fast cores.
+private const val PREP_PARTS = 4
 
-/** Detection input size: the area itself, small sides raised to 64, rounded to multiples of 32 (half to even). */
-internal fun detSize(width: Int, height: Int): Pair<Int, Int> {
+/**
+ * Detection input size: the area itself, scaled down to [maxSide] when longer, else small sides
+ * raised to 64; rounded to multiples of 32 (half to even), as gui-agent's engine does.
+ */
+internal fun detSize(width: Int, height: Int, maxSide: Int? = null): Pair<Int, Int> {
     var ratio = 1.0
-    if (min(width, height) < DET_MIN_SIDE) ratio = DET_MIN_SIDE.toDouble() / min(width, height)
+    if (maxSide != null && max(width, height) > maxSide) ratio = maxSide.toDouble() / max(width, height)
+    else if (min(width, height) < DET_MIN_SIDE) ratio = DET_MIN_SIDE.toDouble() / min(width, height)
     var w = (width * ratio).toInt()
     var h = (height * ratio).toInt()
     if (max(w, h) > DET_MAX_SIDE) {
@@ -149,7 +214,10 @@ internal fun detSize(width: Int, height: Int): Pair<Int, Int> {
  * shortcut: axis-aligned boxes (PaddleOCR fits rotated ones); fine for horizontal UI text,
  * upgrade if slanted text ever matters.
  */
-internal fun boxesFrom(prob: FloatArray, mapW: Int, mapH: Int, outW: Int, outH: Int): List<Box> {
+internal fun boxesFrom(
+    prob: FloatArray, mapW: Int, mapH: Int, outW: Int, outH: Int,
+    boxThresh: Double = OcrConfig().boxThresh, unclipRatio: Double = OcrConfig().unclipRatio,
+): List<Box> {
     val seen = BooleanArray(prob.size)
     val stack = IntArray(prob.size)
     val boxes = mutableListOf<Box>()
@@ -182,8 +250,8 @@ internal fun boxesFrom(prob: FloatArray, mapW: Int, mapH: Int, outW: Int, outH: 
         if (min(w, h) < DB_MIN_SIZE) continue
         var sum = 0.0
         for (y in minY..maxY) for (x in minX..maxX) sum += prob[y * mapW + x]
-        if (sum / ((maxX - minX + 1) * (maxY - minY + 1)) < DB_BOX_THRESH) continue
-        val grow = w * h * DB_UNCLIP_RATIO / (2 * (w + h))
+        if (sum / ((maxX - minX + 1) * (maxY - minY + 1)) < boxThresh) continue
+        val grow = w * h * unclipRatio / (2 * (w + h))
         val gw = w + 2 * grow
         val gh = h + 2 * grow
         if (min(gw, gh) < DB_MIN_SIZE + 2) continue
@@ -244,20 +312,30 @@ private fun resize(
     for (x in 0 until w) sample(x, rw, w).let { (a, b, f) -> x0[x] = rect.left + a; x1[x] = rect.left + b; ax[x] = f }
     val scale = FloatArray(3) { 1f / (255f * std[it]) }
     val shift = FloatArray(3) { mean[it] / std[it] }
-    for (y in 0 until h) {
-        val (ya, yb, ay) = sample(y, rh, h)
-        val rowA = (rect.top + ya) * src.width
-        val rowB = (rect.top + yb) * src.width
-        val base = offset + y * stride
-        for (x in 0 until w) {
-            val p00 = src.argb[rowA + x0[x]]; val p01 = src.argb[rowA + x1[x]]
-            val p10 = src.argb[rowB + x0[x]]; val p11 = src.argb[rowB + x1[x]]
-            val fx = ax[x]
+    // Rows split into parts done in parallel, each row written with bulk puts: single puts into
+    // a direct buffer cost ~100 ns each on the phone (a full screen took ~800 ms).
+    val parts = min(h, PREP_PARTS)
+    IntStream.range(0, parts).parallel().forEach { part ->
+        val dst = out.duplicate()
+        val row = FloatArray(3 * w)
+        for (y in part * h / parts until (part + 1) * h / parts) {
+            val (ya, yb, ay) = sample(y, rh, h)
+            val rowA = (rect.top + ya) * src.width
+            val rowB = (rect.top + yb) * src.width
+            for (x in 0 until w) {
+                val p00 = src.argb[rowA + x0[x]]; val p01 = src.argb[rowA + x1[x]]
+                val p10 = src.argb[rowB + x0[x]]; val p11 = src.argb[rowB + x1[x]]
+                val fx = ax[x]
+                for (c in 0 until 3) {
+                    val s = c * 8 // B, G, R: the channel order the models were trained on (OpenCV)
+                    val top = (p00 shr s and 0xFF) + ((p01 shr s and 0xFF) - (p00 shr s and 0xFF)) * fx
+                    val bottom = (p10 shr s and 0xFF) + ((p11 shr s and 0xFF) - (p10 shr s and 0xFF)) * fx
+                    row[c * w + x] = Math.round(top + (bottom - top) * ay) * scale[c] - shift[c]
+                }
+            }
             for (c in 0 until 3) {
-                val s = c * 8 // B, G, R: the channel order the models were trained on (OpenCV)
-                val top = (p00 shr s and 0xFF) + ((p01 shr s and 0xFF) - (p00 shr s and 0xFF)) * fx
-                val bottom = (p10 shr s and 0xFF) + ((p11 shr s and 0xFF) - (p10 shr s and 0xFF)) * fx
-                out.put(base + c * plane + x, Math.round(top + (bottom - top) * ay) * scale[c] - shift[c])
+                dst.position(offset + y * stride + c * plane)
+                dst.put(row, c * w, w)
             }
         }
     }

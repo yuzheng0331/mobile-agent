@@ -4,7 +4,7 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 
 ## 验证
 
-- 电脑上没有单测，只能真机验证：构建 `:app:assembleDebug`，用文件管理器装 APK（不用 `adb install`），开无障碍，只用小号。
+- 电脑上没有单测，只能真机验证：构建 `:app:assembleDebug`，`adb install -r` 覆盖安装（手机亮屏时点“允许”，覆盖安装不会关掉无障碍服务）或用文件管理器装，只用小号。不要 `am force-stop`：会关掉无障碍服务。
 - 改了 `AgentService` 的行为，报告时附上 App 显示的停止原因和每步“找 / 动 / 等 / 查”耗时。
 
 ## 线程

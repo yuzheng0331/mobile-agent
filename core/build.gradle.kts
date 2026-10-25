@@ -25,4 +25,8 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // The OCR experiments hold ~30 full-screen screenshots in memory.
+    maxHeapSize = "2g"
+}

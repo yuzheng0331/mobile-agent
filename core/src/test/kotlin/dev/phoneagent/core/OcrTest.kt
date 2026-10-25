@@ -1,5 +1,6 @@
 package dev.phoneagent.core
 
+import dev.phoneagent.core.ocr.OcrConfig
 import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.ocr.boxesFrom
 import dev.phoneagent.core.ocr.ctcDecode
@@ -7,6 +8,11 @@ import dev.phoneagent.core.ocr.detSize
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Pixels
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
@@ -137,6 +143,80 @@ class OcrTest {
         assertTrue(found >= expected * 0.95 && same >= expected * 0.85, "OCR drifted from the Python engine")
         ocr.close()
     }
+
+    /**
+     * Accuracy of every combination of the accuracy knobs against ground truth (tree text, hand
+     * labels; see tools/probe/ocr_labels.py), so they are chosen together rather than one at a
+     * time. Off unless OCR_LABELS lists the label files. A label counts as read when a box over
+     * it reads exactly its text; an absent word counts against a setting wherever it is read.
+     */
+    @Test
+    fun `accuracy grid on labelled screenshots`() {
+        val files = System.getenv("OCR_LABELS")?.split(File.pathSeparator)?.map(::File)?.filter { it.isFile }.orEmpty()
+        assumeTrue(files.isNotEmpty(), "set OCR_LABELS to the label files")
+        assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched")
+        class Shot(val pixels: Pixels, val labels: List<Pair<String, Box>>, val absent: List<String>, val wechat: Boolean)
+        val shots = files.flatMap { file ->
+            Json.parseToJsonElement(file.readText()).jsonArray.map { s ->
+                val o = s.jsonObject
+                val path = o.getValue("file").jsonPrimitive.content
+                val labels = o.getValue("labels").jsonArray.map { l ->
+                    val b = l.jsonObject.getValue("box").jsonArray.map { it.jsonPrimitive.int }
+                    l.jsonObject.getValue("text").jsonPrimitive.content to Box(b[0] - 10, b[1] - 10, b[2] + 10, b[3] + 10)
+                }
+                Shot(pixels(ImageIO.read(File(path))), labels, o.getValue("absent").jsonArray.map { it.jsonPrimitive.content }, "wechat" in path)
+            }
+        }
+        val grid = System.getenv("OCR_GRID")?.let { spec -> spec.split(";").map { configOf(it) } } ?: listOf(0.45, 0.6).flatMap { thresh ->
+            listOf(1.5, 2.0).flatMap { unclip ->
+                listOf<Int?>(null, 1600, 1280, 960).flatMap { side ->
+                    listOf(1, 6).map { batch -> OcrConfig(boxThresh = thresh, unclipRatio = unclip, detMaxSide = side, recBatch = batch) }
+                }
+            }
+        }
+        val det = File(MODELS, "det.onnx").readBytes()
+        val rec = File(MODELS, "rec.onnx").readBytes()
+        val dict = File(MODELS, "dict.txt").readLines()
+        println("OCR 网格：${shots.size} 张，标注 ${shots.sumOf { it.labels.size }}，其中 ≤4 字 ${shots.sumOf { s -> s.labels.count { it.first.length <= 4 } }}，不该出现 ${shots.sumOf { it.absent.size }}")
+        for (config in grid) {
+            PpOcr(det, rec, dict, config).use { ocr ->
+                var all = 0; var allRead = 0; var short = 0; var shortRead = 0; var wx = 0; var wxRead = 0; var wrong = 0; var missed = 0; var misread = 0
+                var millis = 0L
+                for (shot in shots) {
+                    val start = System.nanoTime()
+                    val hits = ocr.recognize(shot.pixels, null)
+                    millis += (System.nanoTime() - start) / 1_000_000
+                    for ((text, box) in shot.labels) {
+                        val want = text.filterNot(Char::isWhitespace)
+                        val over = hits.filter { overlaps(it.bounds, box) }
+                        // One box, or a text OCR split into several boxes inside the label (lines, wide gaps).
+                        val inside = over.filter { box.left <= it.bounds.centerX && it.bounds.centerX <= box.right && box.top <= it.bounds.centerY && it.bounds.centerY <= box.bottom }
+                        val read = over.any { it.text.filterNot(Char::isWhitespace) == want } ||
+                            inside.sortedWith(compareBy({ it.bounds.top / 20 }, { it.bounds.left })).joinToString("") { it.text }.filterNot(Char::isWhitespace) == want
+                        all++; if (read) allRead++
+                        if (text.length <= 4) { short++; if (read) shortRead++ else if (over.isEmpty()) missed++ else misread++ }
+                        if (shot.wechat) { wx++; if (read) wxRead++ }
+                    }
+                    wrong += shot.absent.count { word -> hits.any { it.text.trim() == word } }
+                }
+                println("  $config：≤4 字 ${pct(shortRead, short)}（没框 $missed / 认错 $misread），全部 ${pct(allRead, all)}，微信 ${pct(wxRead, wx)}，误读 $wrong，平均 ${millis / shots.size} ms/张（PC）")
+            }
+        }
+    }
+
+    private fun configOf(spec: String): OcrConfig {
+        val v = spec.split(",").associate { it.substringBefore("=").trim() to it.substringAfter("=").trim() }
+        return OcrConfig(
+            boxThresh = v["boxThresh"]?.toDouble() ?: OcrConfig().boxThresh,
+            unclipRatio = v["unclip"]?.toDouble() ?: OcrConfig().unclipRatio,
+            detMaxSide = v["side"]?.toIntOrNull(),
+            recBatch = v["batch"]?.toInt() ?: OcrConfig().recBatch,
+        )
+    }
+
+    private fun pct(a: Int, b: Int) = "%d/%d=%.1f%%".format(a, b, 100.0 * a / maxOf(b, 1))
+
+    private fun overlaps(a: Box, b: Box) = minOf(a.right, b.right) > maxOf(a.left, b.left) && minOf(a.bottom, b.bottom) > maxOf(a.top, b.top)
 
     private fun iou(a: Box, b: Box): Double {
         val w = minOf(a.right, b.right) - maxOf(a.left, b.left)

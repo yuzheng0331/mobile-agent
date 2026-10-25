@@ -10,6 +10,9 @@ import kotlinx.serialization.json.JsonObject
 /** Resolves a find spec such as `{"text": "复制"}` against one frame. */
 fun interface Finder {
     fun find(frame: Frame, spec: JsonObject, registry: Registry): Target?
+
+    /** Capabilities a pack must declare in `needs` to use this finder (e.g. "ocr"). */
+    val needs: Set<String> get() = emptySet()
 }
 
 /** Checks an expectation such as `{"anyText": ["复制"]}` against one frame. */

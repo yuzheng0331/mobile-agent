@@ -90,8 +90,8 @@ private val qqChat = frame(QQ, UiNode(desc = "聊天设置"),
 private val qqMenu = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "复制", clickable = true))
 private val douyin = frame("com.ss.android.ugc.aweme")
 
-private fun pack(steps: String, requires: String = """["$QQ"]""") =
-    Packs.parse("""{"schemaVersion":1,"id":"t","requires":$requires,"steps":$steps}""")
+private fun pack(steps: String, requires: String = """["$QQ"]""", needs: String = "[]") =
+    Packs.parse("""{"schemaVersion":1,"id":"t","requires":$requires,"needs":$needs,"steps":$steps}""")
 
 class CoreTest {
     private val qqPack = Packs.parse(File("../packs/qq-latest-to-douyin.json").readText())
@@ -345,5 +345,31 @@ class CoreTest {
         val noOcr = Frame("p", null, shooter = { shots++; Pixels(1, 1, intArrayOf(0)) })
         assertEquals(emptyList(), noOcr.ocr())
         assertEquals(1, shots) // no recognizer, no screenshot
+    }
+
+    @Test
+    fun `ocrText reads only its region, matches like text, and needs ocr declared`() {
+        val asked = mutableListOf<Box?>()
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = listOf(
+                TextHit("精华 消息", Box(10, 1900, 200, 1950), 0.9f),
+                TextHit("消息", Box(300, 1900, 400, 1950), 0.9f),
+            ).also { asked += region }
+            override fun readLine(pixels: Pixels, region: Box) = null
+        }
+        val frame = Frame("p", null, recognizer = reader, shooter = { Pixels(1000, 2000, IntArray(0)) })
+        fun find(spec: String) = Builtins.registry.find(frame, Json.parseToJsonElement(spec).jsonObject)
+        assertEquals(Box(300, 1900, 400, 1950), find("""{"ocrText":"消息","region":[0,0.75,1,1]}""")?.bounds)
+        assertEquals(Box(0, 1500, 1000, 2000), asked.single()) // fractions of the screenshot, OCR cached per region
+        assertEquals(Box(10, 1900, 200, 1950), find("""{"ocrText":"精华消息","region":[0,0.75,1,1]}""")?.bounds)
+        assertNull(find("""{"ocrText":"华消","exact":true,"region":[0,0.75,1,1]}"""))
+        assertNull(find("""{"ocrText":"转发"}""")?.node)
+        assertNull(Builtins.registry.find(Frame("p", null), Json.parseToJsonElement("""{"ocrText":"消息"}""").jsonObject))
+
+        val tap = """[{"do":"tap","target":{"intent":"x","find":[{"ocrText":"复制","region":[0,0.5,1,1]}]}}]"""
+        assertEquals(1, validate(pack(tap)).size)
+        assertEquals(emptyList(), validate(pack(tap, needs = """["ocr"]""")))
+        val badRegion = """[{"do":"tap","target":{"intent":"x","find":[{"ocrText":"复制","region":[0,0.5,1]}]}}]"""
+        assertEquals(1, validate(pack(badRegion, needs = """["ocr"]""")).size)
     }
 }

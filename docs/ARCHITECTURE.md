@@ -65,7 +65,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 | 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
 | `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。M3 已有：`Perception` 接口（`Device` 继承它）、`Frame.id`、`Frame.screenshot`（第一次用到时才截图，只在内存里）；`AgentService` 一个类同时读树和截图，不拆成 `TreePerception` / `ScreenshotOcrPerception` 两个类。OCR 识别器待接 |
-| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc`（可 `exact`）`id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数）`lastMessage`（聊天区最下面一条消息气泡，跳过整行宽的系统提示） | 锚点叫 `in` 还是 `under` 待定；`ocrText`、`region` 在 M3；预留 `template` |
+| `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要的能力（`ocrText` 需要 `ocr`），任务包 `needs` 里没写就拒收；截图在找法第一次用到时才截 | 已有：`text` `desc`（可 `exact`）`id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数）`lastMessage`（聊天区最下面一条消息气泡，跳过整行宽的系统提示）`ocrText`（可带 `region`） | 锚点叫 `in` 还是 `under` 待定；其他找法是否也支持 `region` 待定；预留 `template` |
 | `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
 | `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |
 | `ScreenDef`（可选） | `id`、`app`、`marks`（若干 Finder，全部命中才算这个画面），只在前台包名匹配的画面里判定；预留 `goto` 字段，不做路由 | — | M3 前 |
@@ -78,11 +78,11 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 真实的例子见 `packs/qq-latest-to-douyin.json`（不在这里抄一份，免得漂移）。它的步骤：启动 QQ（预期有“联系人”标签且没有侧边栏的“返回”；不满足就按返回键，最多 3 次）→ 点底部“消息”标签 → 点会话列表第一行 → 长按聊天区最下面一条消息 → 点“复制” → 启动抖音。
 
-- **找法种类**（v1 只做需要的）：已有 `text`、`desc`（先精确匹配，再退到“包含”；加 `"exact": true` 不退，用于“消息”这类会被更长文字包含的短标签）、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。`lastMessage`：聊天列表里从下往上第一个含“比列表窄的可长按节点”的条目，取其中最大的那个（气泡）；系统提示（撤回、入群、精华）是整行宽，被跳过（依据 2026-10-25 QQ 文字/图片/视频/语音/系统提示的界面树）。`ocrText`（截图识别出的文字，微信用）在 M3。坐标只作为补教结果存在本地，不写进官方包。
+- **找法种类**（v1 只做需要的）：已有 `text`、`desc`（先精确匹配，再退到“包含”；加 `"exact": true` 不退，用于“消息”这类会被更长文字包含的短标签）、`id`、`listItem`（容器里第 N 项，负数从末尾数；`in` 指定容器）。`lastMessage`：聊天列表里从下往上第一个含“比列表窄的可长按节点”的条目，取其中最大的那个（气泡）；系统提示（撤回、入群、精华）是整行宽，被跳过（依据 2026-10-25 QQ 文字/图片/视频/语音/系统提示的界面树）。`ocrText`：截图 OCR 读出的文字（微信用），匹配规则同 `text`（忽略空白，可 `exact`），目标只有坐标、没有节点。坐标只作为补教结果存在本地，不写进官方包。
 - **预期**：`anyText`（界面上出现某些文字之一）、`gone`（某文字消失）、`toast`（出现指定提示）。微信步骤的预期用 OCR 文字判断。
 - **`ifMissing`**：找不到目标时给用户看的人话原因，而不是笼统的“失败”。
 - **包头字段**：`schemaVersion`（必填，现在是 1）、`version`、`author`、`needs`（如 `["ocr"]`）、`testedWith`（如 `{"com.tencent.mm": "8.0.x"}`）。App 不认识的 `schemaVersion` 或缺少 `needs` 里的能力时，加载就拒收，不会跑到一半才失败。解析是严格的：不认识的字段直接报错。补教补丁记下当时的目标 App 版本，版本一变就提示“补丁可能失效”。
-- **每步可选**：`timeoutMs`（默认 5000）、`maxRetry`（默认 1）。`ocrText` 可带 `region`（屏幕比例矩形 `[x, y, w, h]`）；区域位置已知、只有一行字时用 `mode: "rec"`，跳过检测、只跑识别（M3）。
+- **每步可选**：`timeoutMs`（默认 5000）、`maxRetry`（默认 1）。`ocrText` 可带 `region`：屏幕比例矩形 `[left, top, right, bottom]`，取值 0–1，和 `Box` 同序，只检测、识别这一块。区域位置已知、只有一行字时跳过检测、只跑识别（`Frame.ocrLine`），任务包里怎么写待定（M3）。
 - `listItem` 的具体规则（容器怎么认、哪些行算条目、怎么跳过时间分隔条和系统提示）在实现 QQ 任务时按实际界面树定，微信版本按截图版面定。现在的实现只取容器的直接子节点里可点或可长按的那些，按上边缘排序。（建议，待真机定）
 
 不做：画面路由图、多版本变体、参数槽。三个任务都从“启动 App”开始，启动后的首屏就是固定起点；遇到不在预期首屏的情况（例如停在某个聊天里），v1 先按返回键回到列表，最多 3 次，仍不对就停下。已实现（2026-10-25）：`launch` 步的 `expect` 不满足时，`Runner` 按返回键再查，最多 3 次；每次按之前确认前台仍是 `requires` 里的 App，否则停下（`NO_EFFECT`）。用已有的 `back`，动作集不变。

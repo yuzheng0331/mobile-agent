@@ -28,7 +28,7 @@ fun validate(pack: Pack, registry: Registry = Builtins.registry): List<String> {
         if (step.timeoutMs <= 0 || step.maxRetry < 0) problems += "$at: timeoutMs and maxRetry must be positive"
         step.target?.let { target ->
             if (target.find.isEmpty()) problems += "$at: target has no finders"
-            target.find.forEach { checkFinder(it, registry, at, problems) }
+            target.find.forEach { checkFinder(it, registry, pack.needs, at, problems) }
         }
         step.expect?.forEach { (name, arg) ->
             val expectation = registry.expectations[name]
@@ -44,13 +44,16 @@ fun validate(pack: Pack, registry: Registry = Builtins.registry): List<String> {
     return problems
 }
 
-private fun checkFinder(spec: JsonObject, registry: Registry, at: String, problems: MutableList<String>) {
+private fun checkFinder(spec: JsonObject, registry: Registry, needs: List<String>, at: String, problems: MutableList<String>) {
     val name = spec.keys.firstOrNull()
-    if (name == null || name !in registry.finders) {
+    val finder = registry.finders[name]
+    if (name == null || finder == null) {
         problems += "$at: unknown finder $name"
         return
     }
-    (spec["in"] as? JsonObject)?.let { checkFinder(it, registry, at, problems) }
+    // Without the capability the run has no recognizer and the finder would never hit.
+    (finder.needs - needs.toSet()).forEach { problems += "$at: $name needs \"$it\" in the pack's needs" }
+    (spec["in"] as? JsonObject)?.let { checkFinder(it, registry, needs, at, problems) }
     runCatching { registry.find(EMPTY_FRAME, spec) }
         .onFailure { problems += "$at: bad argument for $name: ${it.message}" }
 }

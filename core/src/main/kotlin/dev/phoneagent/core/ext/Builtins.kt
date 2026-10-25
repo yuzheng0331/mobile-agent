@@ -1,11 +1,13 @@
 package dev.phoneagent.core.ext
 
+import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Target
 import dev.phoneagent.core.run.UiNode
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -20,6 +22,10 @@ object Builtins {
             "id" to byField { it.id },
             "listItem" to Finder(::listItem),
             "lastMessage" to Finder(::lastMessage),
+            "ocrText" to object : Finder {
+                override val needs = setOf("ocr")
+                override fun find(frame: Frame, spec: JsonObject, registry: Registry) = ocrText(frame, spec)
+            },
         ),
         expectations = mapOf(
             "anyText" to Expectation { frame, arg -> strings(arg).any { onScreen(frame, it) } },
@@ -35,7 +41,27 @@ object Builtins {
             "long" to Action(needsTarget = true) { device, _, target -> device.press(target!!, long = true) },
             "back" to Action(needsTarget = false) { device, _, _ -> device.back() },
         ),
+        capabilities = setOf("ocr"),
     )
+
+    /**
+     * Text read by OCR, for apps whose tree has no text (WeChat). `region` is
+     * `[left, top, right, bottom]` as fractions of the screen, so packs work at any
+     * resolution; only that part is detected and read. Matching is the same as `text`
+     * (whitespace ignored, since OCR spaces vary). The target is a point: no node.
+     */
+    private fun ocrText(frame: Frame, spec: JsonObject): Target? {
+        val want = spec.getValue("ocrText").jsonPrimitive.content.filterNot(Char::isWhitespace)
+        val exact = spec["exact"]?.jsonPrimitive?.boolean == true
+        val region = spec["region"]?.jsonArray?.map { it.jsonPrimitive.double }?.also { r ->
+            require(r.size == 4 && r.all { it in 0.0..1.0 } && r[0] < r[2] && r[1] < r[3]) { "region is [left, top, right, bottom], fractions 0..1" }
+        }
+        val shot = frame.screenshot ?: return null
+        val box = region?.let { (l, t, r, b) -> Box((l * shot.width).toInt(), (t * shot.height).toInt(), (r * shot.width).toInt(), (b * shot.height).toInt()) }
+        val hits = frame.ocr(box).map { it to it.text.filterNot(Char::isWhitespace) }
+        val hit = hits.firstOrNull { it.second == want } ?: if (exact) null else hits.firstOrNull { want in it.second }
+        return hit?.let { Target(it.first.bounds) }
+    }
 
     /** Exact match first, then the first node containing the text. */
     // `"exact": true` turns off the contains fallback, for short labels like "消息" that longer ones ("精华消息") contain.

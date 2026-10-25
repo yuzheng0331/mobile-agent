@@ -48,7 +48,7 @@ docs/    架构文档、BetterGI / OneDragon 调研（以后压低延迟时要�
 
 ## 扩展
 
-- **加一个任务**：在 `packs/` 放 JSON，`core` 的测试会自动校验它（`shipped packs validate`）。字段见 `Pack.kt` 和 `packs/qq-latest-to-douyin.json`。
+- **加一个任务**：先按架构文档第 8 节在真机上 probe 所有起点和分支，再写任务包；在 `packs/` 放 JSON，`core` 的测试会自动校验它（`shipped packs validate`）。字段见 `Pack.kt` 和 `packs/qq-latest-to-douyin.json`。
 - **加一种找法或预期**：实现 `Finder` / `Expectation`，在 `Builtins.registry` 里按名字注册，并加测试。
 - **加一种动作**（滚动、左右滑等）：同上，但要先过安全评审——动作集里不放输入和发送。
 - **OCR（M3）**：实现 `TextRecognizer` 并交给 `Frame`；探针里的 `OcrBench.kt`（`D:\gui-agent\spikes\a11y_probe`）是起点。

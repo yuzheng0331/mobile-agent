@@ -58,13 +58,27 @@ class OcrScore {
     var misread = 0
         private set
 
+    /**
+     * Boxes over no label, and those of one character (icons and avatars read as a character
+     * look like this). Labels miss some real text, so only compare these between settings.
+     */
+    var unlabelled = 0
+        private set
+    var unlabelledSingle = 0
+        private set
+
     fun add(index: Int, shot: LabelledShot, hits: List<TextHit>) {
         for (label in shot.labels) results += score(index, label, hits, shot.wechat)
         misread += shot.absent.count { word -> hits.any { it.text.trim() == word } }
+        val stray = hits.filter { hit -> shot.labels.none { overlaps(hit.bounds, padded(it.box)) } }
+        unlabelled += stray.size
+        unlabelledSingle += stray.count { squash(it.text).length == 1 }
     }
 
+    private fun padded(b: Box) = Box(b.left - PAD, b.top - PAD, b.right + PAD, b.bottom + PAD)
+
     private fun score(index: Int, label: Label, hits: List<TextHit>, wechat: Boolean): Scored {
-        val box = label.box.let { Box(it.left - PAD, it.top - PAD, it.right + PAD, it.bottom + PAD) }
+        val box = padded(label.box)
         val want = squash(label.text)
         val over = hits.filter { overlaps(it.bounds, box) }
         val inside = over.filter { box.left <= it.bounds.centerX && it.bounds.centerX <= box.right && box.top <= it.bounds.centerY && it.bounds.centerY <= box.bottom }
@@ -81,7 +95,7 @@ class OcrScore {
         return Scored(index, label, reading, got, distance(got, want), wechat)
     }
 
-    /** One line: short labels (with why the rest failed), all labels, character accuracy, WeChat, misreads. No label text. */
+    /** One line: short labels (with why the rest failed), all labels, character accuracy, WeChat, misreads, unlabelled boxes. No label text. */
     fun summary(): String {
         val short = results.filter { it.label.text.length <= SHORT }
         val why = Reading.entries.drop(1).joinToString(" / ") { r -> "${r.zh} ${short.count { it.reading == r }}" }
@@ -90,7 +104,7 @@ class OcrScore {
         val wechat = results.filter { it.wechat }
         return "≤$SHORT 字 ${pct(short.count { it.reading == Reading.READ }, short.size)}（$why），" +
             "全部 ${pct(results.count { it.reading == Reading.READ }, results.size)}，字符 ${pct(charsRight, chars)}，" +
-            "微信 ${pct(wechat.count { it.reading == Reading.READ }, wechat.size)}，误读 $misread"
+            "微信 ${pct(wechat.count { it.reading == Reading.READ }, wechat.size)}，误读 $misread，标注外的框 $unlabelled（单字 $unlabelledSingle）"
     }
 
     /** Read rate, character accuracy and failure reasons per label length; counts only. */

@@ -228,6 +228,8 @@ class OcrTest {
         ))
         assertEquals(listOf(Reading.READ, Reading.READ, Reading.FORMAT, Reading.FEWER, Reading.MORE, Reading.READ, Reading.WRONG), score.results.map { it.reading })
         assertEquals(1, score.misread)
+        assertEquals(1, score.unlabelled) // the absent word, read away from every label
+        assertEquals(0, score.unlabelledSingle)
         assertEquals(Reading.NO_BOX, OcrScore().apply { add(0, shot, emptyList()) }.results.first().reading)
     }
 

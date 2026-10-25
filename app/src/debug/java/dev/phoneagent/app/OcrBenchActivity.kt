@@ -57,20 +57,26 @@ class OcrBenchActivity : Activity() {
     }
 
     /**
-     * Screenshot cost and the system's minimum interval: [SHOTS] back-to-back requests (a refused
-     * one returns at once), then the gap between successful ones.
+     * Screenshot cost and the system's minimum interval: keeps asking, retrying a refused
+     * request every [RETRY_MS], until [SHOTS] succeed; reports each success's cost and the gaps
+     * between successes. Sleeping is fine here, this is a debug measurement, not the runner.
      */
     private fun screenshots(): String {
         val service = AgentService.instance ?: return "截图：无障碍服务未开启"
-        val results = List(SHOTS) {
+        val okAt = mutableListOf<Long>()
+        val costs = mutableListOf<Long>()
+        var refused = 0
+        while (okAt.size < SHOTS) {
             val start = SystemClock.uptimeMillis()
-            val ok = service.capture().screenshot != null
-            Triple(start, SystemClock.uptimeMillis() - start, ok)
+            if (service.capture().screenshot != null) {
+                okAt += start
+                costs += SystemClock.uptimeMillis() - start
+            } else {
+                refused++
+                Thread.sleep(RETRY_MS)
+            }
         }
-        val okStarts = results.filter { it.third }.map { it.first }
-        val gaps = okStarts.zipWithNext { a, b -> b - a }
-        return "截图：连续请求 $SHOTS 次，成功 ${okStarts.size} 次；成功的单次耗时 " +
-            "${results.filter { it.third }.map { it.second }}" + " ms；成功之间的间隔 $gaps ms"
+        return "截图：成功 $SHOTS 次，期间被拒 $refused 次；单次耗时 $costs ms；成功之间的间隔 ${okAt.zipWithNext { a, b -> b - a }} ms"
     }
 
     /** Median of [RUNS] runs after one warm-up. */
@@ -94,7 +100,8 @@ class OcrBenchActivity : Activity() {
         const val TAG = "PhoneAgent"
         val THREADS = listOf(2, 4)
         const val RUNS = 5
-        const val SHOTS = 8
+        const val SHOTS = 6
+        const val RETRY_MS = 50L
         // Full 1080x2400 screen, rounded to multiples of 32 like the Python engine (no downscaling).
         const val DET_WIDTH = 1088L
         const val DET_HEIGHT = 2400L

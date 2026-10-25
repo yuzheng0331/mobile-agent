@@ -354,13 +354,3 @@ private fun sample(i: Int, srcSize: Int, dstSize: Int): Triple<Int, Int, Float> 
 
 private fun floatBuffer(size: Int): FloatBuffer =
     ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-
-/**
- * A short fingerprint of a hit's text and box, so the phone's output can be compared with the
- * PC's without the text ever reaching a log.
- */
-fun TextHit.fingerprint(): String {
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-        .digest("$text|${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}".toByteArray())
-    return digest.take(4).joinToString("") { "%02x".format(it) }
-}

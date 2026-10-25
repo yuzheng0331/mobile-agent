@@ -5,7 +5,12 @@ import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.ocr.boxesFrom
 import dev.phoneagent.core.ocr.ctcDecode
 import dev.phoneagent.core.ocr.detSize
-import dev.phoneagent.core.ocr.fingerprint
+import dev.phoneagent.core.ocr.Label
+import dev.phoneagent.core.ocr.LabelledShot
+import dev.phoneagent.core.ocr.OcrScore
+import dev.phoneagent.core.ocr.Reading
+import dev.phoneagent.core.ocr.parseLabels
+import dev.phoneagent.core.run.TextHit
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Pixels
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -156,18 +161,8 @@ class OcrTest {
         val files = System.getenv("OCR_LABELS")?.split(File.pathSeparator)?.map(::File)?.filter { it.isFile }.orEmpty()
         assumeTrue(files.isNotEmpty(), "set OCR_LABELS to the label files")
         assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched")
-        class Shot(val pixels: Pixels, val labels: List<Pair<String, Box>>, val absent: List<String>, val wechat: Boolean)
-        val shots = files.flatMap { file ->
-            Json.parseToJsonElement(file.readText()).jsonArray.map { s ->
-                val o = s.jsonObject
-                val path = o.getValue("file").jsonPrimitive.content
-                val labels = o.getValue("labels").jsonArray.map { l ->
-                    val b = l.jsonObject.getValue("box").jsonArray.map { it.jsonPrimitive.int }
-                    l.jsonObject.getValue("text").jsonPrimitive.content to Box(b[0] - 10, b[1] - 10, b[2] + 10, b[3] + 10)
-                }
-                Shot(pixels(ImageIO.read(File(path))), labels, o.getValue("absent").jsonArray.map { it.jsonPrimitive.content }, "wechat" in path)
-            }
-        }
+        val shots = files.flatMap { parseLabels(it.readText()) }
+        val images = shots.map { pixels(ImageIO.read(File(it.file))) }
         val grid = System.getenv("OCR_GRID")?.let { spec -> spec.split(";").map { configOf(it) } } ?: listOf(0.45, 0.6).flatMap { thresh ->
             listOf(1.5, 2.0).flatMap { unclip ->
                 listOf<Int?>(null, 1600, 1280, 960).flatMap { side ->
@@ -178,72 +173,62 @@ class OcrTest {
         val det = File(MODELS, "det.onnx").readBytes()
         val rec = File(MODELS, "rec.onnx").readBytes()
         val dict = File(MODELS, "dict.txt").readLines()
-        println("OCR 网格：${shots.size} 张，标注 ${shots.sumOf { it.labels.size }}，其中 ≤4 字 ${shots.sumOf { s -> s.labels.count { it.first.length <= 4 } }}，不该出现 ${shots.sumOf { it.absent.size }}")
+        println("OCR 网格：${shots.size} 张，标注 ${shots.sumOf { it.labels.size }}，其中 ≤${OcrScore.SHORT} 字 ${shots.sumOf { s -> s.labels.count { it.text.length <= OcrScore.SHORT } }}，不该出现 ${shots.sumOf { it.absent.size }}")
         for (config in grid) {
             PpOcr(det, rec, dict, config).use { ocr ->
-                var all = 0; var allRead = 0; var short = 0; var shortRead = 0; var wx = 0; var wxRead = 0; var wrong = 0; var missed = 0; var misread = 0
+                val score = OcrScore()
                 var millis = 0L
-                for (shot in shots) {
+                shots.forEachIndexed { i, shot ->
                     val start = System.nanoTime()
-                    val hits = ocr.recognize(shot.pixels, null)
+                    val hits = ocr.recognize(images[i], null)
                     millis += (System.nanoTime() - start) / 1_000_000
-                    for ((text, box) in shot.labels) {
-                        val want = text.filterNot(Char::isWhitespace)
-                        val over = hits.filter { overlaps(it.bounds, box) }
-                        // One box, or a text OCR split into several boxes inside the label (lines, wide gaps).
-                        val inside = over.filter { box.left <= it.bounds.centerX && it.bounds.centerX <= box.right && box.top <= it.bounds.centerY && it.bounds.centerY <= box.bottom }
-                        val read = over.any { it.text.filterNot(Char::isWhitespace) == want } ||
-                            inside.sortedWith(compareBy({ it.bounds.top / 20 }, { it.bounds.left })).joinToString("") { it.text }.filterNot(Char::isWhitespace) == want
-                        all++; if (read) allRead++
-                        if (text.length <= 4) { short++; if (read) shortRead++ else if (over.isEmpty()) missed++ else misread++ }
-                        if (shot.wechat) { wx++; if (read) wxRead++ }
-                    }
-                    wrong += shot.absent.count { word -> hits.any { it.text.trim() == word } }
+                    score.add(i, shot, hits)
                 }
-                println("  $config：≤4 字 ${pct(shortRead, short)}（没框 $missed / 认错 $misread），全部 ${pct(allRead, all)}，微信 ${pct(wxRead, wx)}，误读 $wrong，平均 ${millis / shots.size} ms/张（PC）")
+                println("  $config：${score.summary()}，平均 ${millis / shots.size} ms/张（PC）")
+                if (config == grid.first()) {
+                    score.byLength().forEach { println("    $it") }
+                    System.getenv("OCR_MISSES")?.let { writeMisses(File(it), shots, score) }
+                }
             }
         }
     }
 
     /**
-     * Whether the phone reads what the PC reads, so the PC accuracy grid holds for the phone.
-     * Off unless OCR_PHONE names the bench's logcat lines (`对照 <side> <index> <fingerprints>`,
-     * side 0 = full size) and OCR_LABELS the label files whose screenshots were pushed, in order.
+     * Every label that was not read, with what OCR read and the screenshot crop, as a local HTML
+     * page (it holds real screen text: write it under tools/probe/out/, never into the repository).
      */
+    private fun writeMisses(out: File, shots: List<LabelledShot>, score: OcrScore) {
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        val rows = score.results.filter { it.reading != Reading.READ }.sortedWith(compareBy({ it.reading }, { it.label.text.length })).joinToString("\n") { r ->
+            val b = r.label.box
+            val url = File(shots[r.shot].file).toURI()
+            val crop = "width:${b.right - b.left}px;height:${b.bottom - b.top}px;background:url('$url') -${b.left}px -${b.top}px"
+            "<tr><td>${r.reading.zh}</td><td>${r.shot} ${esc(File(shots[r.shot].file).parentFile.name)}</td><td>${esc(r.label.text)}</td><td>${esc(r.got)}</td><td>${r.distance}</td><td><div style=\"$crop\"></div></td></tr>"
+        }
+        out.writeText("""<!doctype html><meta charset="utf-8"><title>OCR 没读对的标注</title>
+            <style>body{font:14px sans-serif;background:#fff;color:#000}td{border-bottom:1px solid #ccc;padding:4px;vertical-align:top;max-width:420px}div{max-width:1080px;overflow:hidden;border:1px solid red}</style>
+            <p>${esc(score.summary())}</p><table><tr><th>原因</th><th>截图</th><th>标注</th><th>OCR 最接近的读法</th><th>差几个字</th><th>截图上的位置</th></tr>
+            $rows</table>""".trimIndent())
+        println("    没读对的标注写到了 ${out.absolutePath}")
+    }
+
     @Test
-    fun `phone output matches the PC`() {
-        val log = System.getenv("OCR_PHONE")?.let(::File)
-        assumeTrue(log?.isFile == true, "set OCR_PHONE to the phone's 对照 lines")
-        assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched")
-        val files = System.getenv("OCR_LABELS").orEmpty().split(File.pathSeparator).map(::File).filter { it.isFile }
-        val shots = files.flatMap { f -> Json.parseToJsonElement(f.readText()).jsonArray.map { it.jsonObject } }
-        val paths = shots.map { it.getValue("file").jsonPrimitive.content }
-        // Short labels, padded as in the grid: an upper bound on how many readings a differing box can change.
-        val short = shots.map { o ->
-            o.getValue("labels").jsonArray.map { it.jsonObject }.filter { it.getValue("text").jsonPrimitive.content.length <= 4 }.map { l ->
-                val b = l.getValue("box").jsonArray.map { it.jsonPrimitive.int }
-                Box(b[0] - 10, b[1] - 10, b[2] + 10, b[3] + 10)
-            }
-        }
-        val phone = log!!.readLines().mapNotNull { Regex("""对照 (\d+) (\d+) ?(.*)""").find(it)?.destructured }
-            .map { (side, index, prints) -> Triple(side.toInt(), index.toInt(), prints.split(" ").filter(String::isNotEmpty).toSet()) }
-        val det = File(MODELS, "det.onnx").readBytes()
-        val rec = File(MODELS, "rec.onnx").readBytes()
-        val dict = File(MODELS, "dict.txt").readLines()
-        for ((side, rows) in phone.groupBy { it.first }) {
-            PpOcr(det, rec, dict, OcrConfig(detMaxSide = side.takeIf { it > 0 })).use { ocr ->
-                var pc = 0; var same = 0; var phoneOnly = 0; var identical = 0; var touched = 0
-                for ((_, index, prints) in rows) {
-                    val hits = ocr.recognize(pixels(ImageIO.read(File(paths[index]))), null)
-                    val mine = hits.map { it.fingerprint() }.toSet()
-                    pc += mine.size; same += (mine intersect prints).size; phoneOnly += (prints - mine).size
-                    if (mine == prints) identical++
-                    val differing = hits.filter { it.fingerprint() !in prints }
-                    touched += short[index].count { label -> differing.any { overlaps(it.bounds, label) } }
-                }
-                println("手机 vs 电脑，检测边长 ${if (side == 0) "原图" else side}：${rows.size} 张，完全一致 $identical 张；电脑 $pc 框，手机相同 $same（${pct(same, pc)}），只在手机上 $phoneOnly；不同的框碰到 ≤4 字标注 $touched 个")
-            }
-        }
+    fun `scoring tells why a label was not read`() {
+        val shot = LabelledShot("x/wechat/screen.png", listOf(
+            Label("复制", Box(0, 0, 100, 40)), Label("转 发", Box(200, 0, 300, 40)), Label("收藏！", Box(400, 0, 500, 40)),
+            Label("通讯录", Box(600, 0, 700, 40)), Label("我", Box(800, 0, 840, 40)), Label("第一行第二行", Box(0, 100, 300, 200)),
+            Label("删除", Box(0, 300, 100, 340)),
+        ), listOf("多选"))
+        fun hit(text: String, l: Int, t: Int, r: Int, b: Int) = TextHit(text, Box(l, t, r, b), 0.9f)
+        val score = OcrScore()
+        score.add(0, shot, listOf(
+            hit("复制", 5, 5, 95, 35), hit("转发", 205, 5, 295, 35), hit("收藏!", 405, 5, 495, 35), hit("通讯", 605, 5, 680, 35),
+            hit("我的", 800, 5, 880, 35), hit("第二行", 0, 160, 300, 190), hit("第一行", 0, 110, 300, 140), hit("删险", 0, 300, 100, 340),
+            hit("多选", 900, 900, 960, 940),
+        ))
+        assertEquals(listOf(Reading.READ, Reading.READ, Reading.FORMAT, Reading.FEWER, Reading.MORE, Reading.READ, Reading.WRONG), score.results.map { it.reading })
+        assertEquals(1, score.misread)
+        assertEquals(Reading.NO_BOX, OcrScore().apply { add(0, shot, emptyList()) }.results.first().reading)
     }
 
     private fun configOf(spec: String): OcrConfig {
@@ -255,10 +240,6 @@ class OcrTest {
             recBatch = v["batch"]?.toInt() ?: OcrConfig().recBatch,
         )
     }
-
-    private fun pct(a: Int, b: Int) = "%d/%d=%.1f%%".format(a, b, 100.0 * a / maxOf(b, 1))
-
-    private fun overlaps(a: Box, b: Box) = minOf(a.right, b.right) > maxOf(a.left, b.left) && minOf(a.bottom, b.bottom) > maxOf(a.top, b.top)
 
     private fun iou(a: Box, b: Box): Double {
         val w = minOf(a.right, b.right) - maxOf(a.left, b.left)

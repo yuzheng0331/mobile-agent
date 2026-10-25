@@ -9,7 +9,8 @@ import android.widget.TextView
 import dev.phoneagent.core.ocr.OcrConfig
 import dev.phoneagent.core.ocr.OcrProvider
 import dev.phoneagent.core.ocr.PpOcr
-import dev.phoneagent.core.ocr.fingerprint
+import dev.phoneagent.core.ocr.OcrScore
+import dev.phoneagent.core.ocr.parseLabels
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Pixels
 import java.io.File
@@ -24,7 +25,7 @@ import java.io.File
  * Extras narrow the grid, e.g. `--es providers NNAPI+NNAPI,XNNPACK+CPU --es sides 0,1280
  * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
  * crashes takes the process with it, so run those alone.
- * `--es agree 0,1920` instead compares with the PC: see [agreement].
+ * `--es score 0,2240` instead scores against the labels at those detection sides: see [score].
  */
 class OcrBenchActivity : Activity() {
 
@@ -46,9 +47,9 @@ class OcrBenchActivity : Activity() {
                 Log.i(TAG, line)
                 runOnUiThread { out.text = lines.joinToString("\n\n") }
             }
-            val agree = list("agree")?.map { it.toInt() }
-            if (agree == null) log(screenshots())
-            runCatching { if (agree != null) agreement(agree, ::log) else ocrGrid(providers, sides, batches, ::log) }
+            val score = list("score")?.map { it.toInt() }
+            if (score == null) log(screenshots())
+            runCatching { if (score != null) score(score, ::log) else ocrGrid(providers, sides, batches, ::log) }
                 .onFailure { log("OCR 出错：$it") }
             log("测速结束")
         }.start()
@@ -103,23 +104,26 @@ class OcrBenchActivity : Activity() {
     }
 
     /**
-     * Reads every screenshot in `files/ocr/agree/` (pushed in label order, names sorting as
-     * that order) at each detection side (0 = full size) and logs one fingerprint per hit,
-     * for OcrTest's `phone output matches the PC`. No text is logged.
+     * Accuracy on the phone itself: `files/ocr/labelled/labels.json` (the label files merged, in
+     * order) and the screenshots as `00.png`, `01.png`, … in that order, both pushed with adb and
+     * deleted after. Scored as on the PC (OcrScore); only counts are logged, never the text.
      */
-    private fun agreement(sides: List<Int>, log: (String) -> Unit) {
-        val shots = File(getExternalFilesDir(null), "ocr/agree").listFiles { f -> f.name.endsWith(".png") }.orEmpty().sortedBy { it.name }
-        if (shots.isEmpty()) return log("对照：没有截图")
+    private fun score(sides: List<Int>, log: (String) -> Unit) {
+        val dir = File(getExternalFilesDir(null), "ocr/labelled")
+        val labels = File(dir, "labels.json").takeIf { it.isFile }?.let { parseLabels(it.readText()) } ?: return log("判分：没有标注")
         fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
         val dict = assets.open("ocr/dict.txt").bufferedReader().readLines()
         for (side in sides) PpOcr(bytes("det.onnx"), bytes("rec.onnx"), dict, OcrConfig(detMaxSide = side.takeIf { it > 0 })).use { ocr ->
-            shots.forEachIndexed { index, file ->
-                val bitmap = BitmapFactory.decodeFile(file.path)
+            val score = OcrScore()
+            labels.forEachIndexed { index, shot ->
+                val bitmap = BitmapFactory.decodeFile(File(dir, "%02d.png".format(index)).path)
                 val screen = Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
                     bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
                 })
-                log("对照 $side $index " + ocr.recognize(screen, null).joinToString(" ") { it.fingerprint() })
+                score.add(index, shot, ocr.recognize(screen, null))
             }
+            log("判分（手机）检测边长 ${if (side == 0) "原图" else side}：${labels.size} 张，${score.summary()}")
+            score.byLength().forEach { log("  $it") }
         }
     }
 

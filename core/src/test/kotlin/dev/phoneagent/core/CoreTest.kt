@@ -8,6 +8,7 @@ import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Outcome
+import dev.phoneagent.core.run.RunObserver
 import dev.phoneagent.core.run.Runner
 import dev.phoneagent.core.run.StepTrace
 import dev.phoneagent.core.run.Target
@@ -42,8 +43,12 @@ private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: 
     override fun nowMs() = now
     override fun awaitSettle(timeoutMs: Long): Boolean {
         now += minOf(300, timeoutMs)
+        userActsAt?.let { if (now >= it) { userActsAt = null; current++ } }
         return true
     }
+
+    /** The user changes the screen themselves (e.g. closes a dialog) once the clock passes this. */
+    var userActsAt: Long? = null
 
     private fun act(name: String): Boolean {
         actions += name
@@ -186,6 +191,29 @@ class CoreTest {
         assertTrue(result.reason!!.endsWith("不是文字"))
         assertTrue(device.nowMs() >= 1000)
         assertEquals(emptyList(), device.actions)
+    }
+
+    @Test
+    fun `a stuck step asks the user, waits for the screen to change, then tries once more`() {
+        val dialog = frame(QQ, UiNode(text = "发现新版本"), UiNode(text = "稍后"))
+        val stuckReasons = mutableListOf<String>()
+        val device = FakeDevice(dialog, qqMenu, douyin).apply { userActsAt = 3_000 }
+        val result = Runner(device, observer = object : RunObserver {
+            override fun onStep(trace: StepTrace) = Unit
+            override fun onStuck(reason: String) { stuckReasons += reason }
+        }).run(pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"timeoutMs":600}]"""))
+        assertTrue(result.ok, result.reason)
+        assertEquals(1, stuckReasons.size)
+        assertEquals(listOf(Outcome.MISSING, Outcome.SUCCESS), result.steps.map { it.outcome })
+        assertEquals(listOf("tap"), device.actions) // nothing was tapped while the dialog was up
+    }
+
+    @Test
+    fun `a stuck step stops when the user does nothing`() {
+        val device = FakeDevice(qqChat)
+        val result = Runner(device).run(pack("""[{"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"timeoutMs":600}]"""))
+        assertEquals(Outcome.MISSING, result.steps.single().outcome)
+        assertTrue(device.nowMs() >= 20_000)
     }
 
     @Test

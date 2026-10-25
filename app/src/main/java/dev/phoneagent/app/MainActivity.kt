@@ -13,6 +13,7 @@ import android.widget.Toast
 import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Packs
 import dev.phoneagent.core.pack.validate
+import dev.phoneagent.core.run.RunObserver
 import dev.phoneagent.core.run.Runner
 import dev.phoneagent.core.run.StepTrace
 import java.util.concurrent.Executors
@@ -64,16 +65,23 @@ class MainActivity : Activity() {
         status.text = "运行中：${pack.id}"
         worker.execute {
             val lines = mutableListOf<String>()
-            val result = Runner(device, observer = { trace ->
-                val line = timing(trace)
-                Log.i(TAG, "${pack.id} $line")
-                runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
+            val result = Runner(device, observer = object : RunObserver {
+                override fun onStep(trace: StepTrace) {
+                    val line = timing(trace)
+                    Log.i(TAG, "${pack.id} $line")
+                    runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
+                }
+
+                // Shown over the target app with the service's context; this activity is in the background.
+                override fun onStuck(reason: String) = runOnUiThread {
+                    Toast.makeText(device, "$reason\n如果有弹窗，请手动关掉，20 秒内会自动重试", Toast.LENGTH_LONG).show()
+                }
             }).run(pack)
             Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
             runOnUiThread {
                 status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n")
                 // The target app hides this screen, so say why it stopped over it; a dialog is the usual cause.
-                result.reason?.let { Toast.makeText(this, "$it\n如果有弹窗挡住，请先关掉再重新运行", Toast.LENGTH_LONG).show() }
+                result.reason?.let { Toast.makeText(device, "已停止：$it", Toast.LENGTH_LONG).show() }
             }
         }
     }

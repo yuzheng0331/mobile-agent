@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 
 private const val MAX_BACKS = 3
 private const val LAUNCH_CHECK_MS = 1_500L
+private const val USER_WAIT_MS = 20_000L
 
 enum class Outcome { SUCCESS, MISSING, WRONG_APP, NO_EFFECT, ACTION_FAILED }
 
@@ -37,9 +38,12 @@ data class RunResult(val packId: String, val steps: List<StepTrace>, val reason:
  * the UI settles, check the expectation. "Still loading" waits without using up a
  * retry; "no effect" retries the action, but only if the target is still there.
  */
-/** Hears about a run while it goes, so the UI can draw progress. `onStuck` (teach / skip / stop) joins in M4. */
+/** Hears about a run while it goes, so the UI can draw progress. Teach / skip / stop on stuck joins in M4. */
 fun interface RunObserver {
     fun onStep(trace: StepTrace)
+
+    /** A step failed and the run waits for the user to clear the screen (usually an app dialog). */
+    fun onStuck(reason: String) {}
 }
 
 class Runner(
@@ -51,7 +55,21 @@ class Runner(
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
         for ((index, step) in pack.steps.withIndex()) {
-            val trace = runStep(index, step, pack.requires, pack.steps.getOrNull(index - 1)?.expect)
+            val screen = pack.steps.getOrNull(index - 1)?.expect
+            var trace = runStep(index, step, pack.requires, screen)
+            // Usually an app dialog (update, ad) is in the way: ask the user to close it, wait for
+            // the screen to change, then try the step once more. Nothing is tapped meanwhile.
+            if (trace.outcome != Outcome.SUCCESS && trace.outcome != Outcome.ACTION_FAILED) {
+                traces += trace
+                observer.onStep(trace)
+                observer.onStuck(reason(index, step, trace.outcome))
+                val blocked = device.capture().tree
+                if (waitFor(USER_WAIT_MS) { frame -> frame.tree.takeIf { it != blocked } } == null) {
+                    return RunResult(pack.id, traces, reason(index, step, trace.outcome))
+                }
+                device.awaitSettle(step.timeoutMs)
+                trace = runStep(index, step, pack.requires, screen)
+            }
             traces += trace
             observer.onStep(trace)
             if (trace.outcome != Outcome.SUCCESS) return RunResult(pack.id, traces, reason(index, step, trace.outcome))

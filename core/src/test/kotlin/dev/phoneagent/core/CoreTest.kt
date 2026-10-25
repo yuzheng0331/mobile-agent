@@ -43,11 +43,10 @@ private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: 
     }
 }
 
-private fun row(top: Int, label: String, long: Boolean = false) = UiNode(
+private fun row(top: Int, label: String) = UiNode(
     bounds = Box(0, top, 1080, top + 150),
-    clickable = !long,
-    longClickable = long,
-    children = listOf(UiNode(text = label)),
+    clickable = true,
+    children = listOf(UiNode(bounds = Box(0, top, 1080, top + 150), clickable = true, children = listOf(UiNode(text = label)))),
 )
 
 private fun frame(pkg: String, vararg nodes: UiNode) = Frame(pkg, UiNode(children = nodes.toList()))
@@ -60,9 +59,15 @@ private val qqList = frame(QQ,
     UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400), children = listOf(UiNode(children = listOf(
         UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400),
             children = listOf(row(400, "会话B"), row(212, "搜索").copy(desc = "搜索"), row(250, "会话A"))))))))
+// As on real QQ: list rows are a clickable wrapper around a same-size clickable row; message rows
+// are not actionable themselves, only the avatar and the (larger) bubble inside are long-clickable.
+private fun message(top: Int, text: String) = UiNode(bounds = Box(0, top, 1080, top + 400), children = listOf(
+    UiNode(bounds = Box(32, top + 20, 140, top + 240), longClickable = true, clickable = true),
+    UiNode(bounds = Box(140, top + 40, 810, top + 400), longClickable = true, children = listOf(UiNode(text = text))),
+))
 private val qqChat = frame(QQ, UiNode(desc = "聊天设置"),
     UiNode(scrollable = true, bounds = Box(0, 200, 1080, 2000),
-        children = listOf(row(300, "旧消息", long = true), row(900, "最新消息", long = true))))
+        children = listOf(message(300, "旧消息"), message(900, "最新消息"))))
 private val qqMenu = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "复制", clickable = true))
 private val douyin = frame("com.ss.android.ugc.aweme")
 
@@ -102,7 +107,7 @@ class CoreTest {
         assertEquals(listOf("launch $QQ", "tap", "long", "tap", "launch com.ss.android.ugc.aweme"), device.actions)
         // listItem 0 is the topmost row, -1 the bottom-most message
         assertEquals(250, result.steps[1].bounds!!.top) // row 1: row 0 is the search bar
-        assertEquals(900, result.steps[2].bounds!!.top)
+        assertEquals(Box(140, 940, 810, 1300), result.steps[2].bounds) // the bubble, not the avatar
     }
 
     @Test

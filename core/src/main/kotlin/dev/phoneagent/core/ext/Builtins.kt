@@ -44,9 +44,12 @@ object Builtins {
     }
 
     /**
-     * Item N (negative counts from the end) of a list: the clickable direct children of
-     * the container found by `in`, or of the largest scrollable node (else the list view with the most rows), ordered top to bottom.
-     * shortcut: direct children only, check against real QQ/WeChat trees in M1/M3.
+     * Item N (negative counts from the end) of a list: the direct children of the container
+     * found by `in`, or of the largest scrollable node (else the list view with the most rows),
+     * that hold something actionable, ordered top to bottom. The target is the item's largest
+     * actionable node, innermost on a tie: QQ handles taps on an inner same-size row, and in
+     * chats the message bubble rather than the (also long-clickable) avatar.
+     * shortcut: tuned on QQ 2026-10 trees only; recheck for WeChat (M3).
      */
     private fun listItem(frame: Frame, spec: JsonObject, registry: Registry): Target? {
         val index = spec.getValue("listItem").jsonPrimitive.int
@@ -57,10 +60,15 @@ object Builtins {
             ?: frame.nodes().filter { it.className?.endsWith("RecyclerView") == true || it.className?.endsWith("ListView") == true }
                 .maxByOrNull { list -> list.children.count { it.clickable || it.longClickable } }
             ?: return null
-        val items = container.children.filter { it.clickable || it.longClickable }.sortedBy { it.bounds.top }
+        val items = container.children.filter { item -> item.walk().any(::actionable) }.sortedBy { it.bounds.top }
         val item = items.getOrNull(if (index < 0) items.size + index else index) ?: return null
-        return Target(item.bounds, item)
+        val actionables = item.walk().filter(::actionable).toList()
+        val largest = actionables.maxOf { it.bounds.area }
+        val node = actionables.last { it.bounds.area == largest }
+        return Target(node.bounds, node)
     }
+
+    private fun actionable(node: UiNode) = node.clickable || node.longClickable
 
     private fun strings(arg: JsonElement): List<String> = arg.jsonArray.map { it.jsonPrimitive.content }
 

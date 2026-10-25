@@ -7,6 +7,7 @@ import dev.phoneagent.core.pack.Step
 import kotlinx.serialization.json.JsonObject
 
 private const val MAX_BACKS = 3
+private const val LAUNCH_CHECK_MS = 1_500L
 
 enum class Outcome { SUCCESS, MISSING, WRONG_APP, NO_EFFECT, ACTION_FAILED }
 
@@ -87,13 +88,18 @@ class Runner(
             actMs += device.nowMs() - start
             if (!done) return trace(Outcome.ACTION_FAILED)
 
+            // Nothing to check: don't wait for a screen that may never go quiet (e.g. a video feed).
+            val expect = step.expect ?: return trace(Outcome.SUCCESS)
+
             start = device.nowMs()
             device.awaitSettle(step.timeoutMs)
             settleMs += device.nowMs() - start
 
-            val expect = step.expect ?: return trace(Outcome.SUCCESS)
+            // The launched app is already in front, so a wrong start screen shows quickly: go back sooner.
+            // shortcut: 1.5 s may be too short for a slow cold start, raise it if launch backs out of a splash.
+            val checkFor = if (step.action == "launch") minOf(step.timeoutMs, LAUNCH_CHECK_MS) else step.timeoutMs
             start = device.nowMs()
-            val met = waitFor(step.timeoutMs) { frame -> registry.holds(frame, expect).takeIf { it } } != null
+            val met = waitFor(checkFor) { frame -> registry.holds(frame, expect).takeIf { it } } != null
             checkMs += device.nowMs() - start
             if (met) return trace(Outcome.SUCCESS)
 

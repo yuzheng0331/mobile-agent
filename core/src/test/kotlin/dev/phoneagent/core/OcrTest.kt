@@ -5,6 +5,7 @@ import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.ocr.boxesFrom
 import dev.phoneagent.core.ocr.ctcDecode
 import dev.phoneagent.core.ocr.detSize
+import dev.phoneagent.core.ocr.fingerprint
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Pixels
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -200,6 +201,47 @@ class OcrTest {
                     wrong += shot.absent.count { word -> hits.any { it.text.trim() == word } }
                 }
                 println("  $config：≤4 字 ${pct(shortRead, short)}（没框 $missed / 认错 $misread），全部 ${pct(allRead, all)}，微信 ${pct(wxRead, wx)}，误读 $wrong，平均 ${millis / shots.size} ms/张（PC）")
+            }
+        }
+    }
+
+    /**
+     * Whether the phone reads what the PC reads, so the PC accuracy grid holds for the phone.
+     * Off unless OCR_PHONE names the bench's logcat lines (`对照 <side> <index> <fingerprints>`,
+     * side 0 = full size) and OCR_LABELS the label files whose screenshots were pushed, in order.
+     */
+    @Test
+    fun `phone output matches the PC`() {
+        val log = System.getenv("OCR_PHONE")?.let(::File)
+        assumeTrue(log?.isFile == true, "set OCR_PHONE to the phone's 对照 lines")
+        assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched")
+        val files = System.getenv("OCR_LABELS").orEmpty().split(File.pathSeparator).map(::File).filter { it.isFile }
+        val shots = files.flatMap { f -> Json.parseToJsonElement(f.readText()).jsonArray.map { it.jsonObject } }
+        val paths = shots.map { it.getValue("file").jsonPrimitive.content }
+        // Short labels, padded as in the grid: an upper bound on how many readings a differing box can change.
+        val short = shots.map { o ->
+            o.getValue("labels").jsonArray.map { it.jsonObject }.filter { it.getValue("text").jsonPrimitive.content.length <= 4 }.map { l ->
+                val b = l.getValue("box").jsonArray.map { it.jsonPrimitive.int }
+                Box(b[0] - 10, b[1] - 10, b[2] + 10, b[3] + 10)
+            }
+        }
+        val phone = log!!.readLines().mapNotNull { Regex("""对照 (\d+) (\d+) ?(.*)""").find(it)?.destructured }
+            .map { (side, index, prints) -> Triple(side.toInt(), index.toInt(), prints.split(" ").filter(String::isNotEmpty).toSet()) }
+        val det = File(MODELS, "det.onnx").readBytes()
+        val rec = File(MODELS, "rec.onnx").readBytes()
+        val dict = File(MODELS, "dict.txt").readLines()
+        for ((side, rows) in phone.groupBy { it.first }) {
+            PpOcr(det, rec, dict, OcrConfig(detMaxSide = side.takeIf { it > 0 })).use { ocr ->
+                var pc = 0; var same = 0; var phoneOnly = 0; var identical = 0; var touched = 0
+                for ((_, index, prints) in rows) {
+                    val hits = ocr.recognize(pixels(ImageIO.read(File(paths[index]))), null)
+                    val mine = hits.map { it.fingerprint() }.toSet()
+                    pc += mine.size; same += (mine intersect prints).size; phoneOnly += (prints - mine).size
+                    if (mine == prints) identical++
+                    val differing = hits.filter { it.fingerprint() !in prints }
+                    touched += short[index].count { label -> differing.any { overlaps(it.bounds, label) } }
+                }
+                println("手机 vs 电脑，检测边长 ${if (side == 0) "原图" else side}：${rows.size} 张，完全一致 $identical 张；电脑 $pc 框，手机相同 $same（${pct(same, pc)}），只在手机上 $phoneOnly；不同的框碰到 ≤4 字标注 $touched 个")
             }
         }
     }

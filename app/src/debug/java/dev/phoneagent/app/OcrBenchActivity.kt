@@ -157,7 +157,7 @@ class OcrBenchActivity : Activity() {
         const val RUNS = 3
         // Every combination, not one knob at a time. Threads stay at 4 + 4: on 2026-10-26 det and
         // rec times each depended only on their own thread count, and 4 beat 2, 6 and 8 for both.
-        val DET_SIDES = listOf<Int?>(null, 1280, 960)
+        val DET_SIDES = listOf<Int?>(2240, null, 1280, 960)
         val REC_BATCHES = listOf(6, 1, 12)
     }
 }

@@ -25,8 +25,11 @@ data class OcrConfig(
     val boxThresh: Double = 0.6,
     /** How far a detected region is grown before cropping (DB unclip ratio). */
     val unclipRatio: Double = 1.5,
-    /** Longest side of the detection input; larger areas are scaled down. Null keeps full resolution. */
-    val detMaxSide: Int? = null,
+    /**
+     * Longest side of the detection input; larger areas are scaled down. Null keeps full resolution.
+     * 2240: as accurate as full size on the labelled screenshots (2026-10-26), where 2048 and below lose labels.
+     */
+    val detMaxSide: Int? = 2240,
     /** Lines per recognition run; lines in a run are padded to the widest. */
     val recBatch: Int = 6,
     val detThreads: Int = 4,

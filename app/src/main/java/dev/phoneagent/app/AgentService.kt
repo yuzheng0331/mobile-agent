@@ -79,7 +79,34 @@ class AgentService : AccessibilityService(), Device {
         // shortcut: main display only; a virtual display would pass ActivityOptions.setLaunchDisplayId.
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        return true
+        // Only report success once the app is really in front: vivo may hold it behind a jump-confirm dialog.
+        val deadline = nowMs() + LAUNCH_TIMEOUT_MS
+        while (nowMs() < deadline) {
+            if (rootInActiveWindow?.packageName == packageName) return true
+            confirmJump(packageName)
+            awaitSettle(deadline - nowMs())
+        }
+        return false
+    }
+
+    /**
+     * The one exception to "only touch required apps" (owner's decision): the system dialog
+     * "<this app> 想要打开 <target>". Taps "仅打开一次" only, never "始终打开", and only when the
+     * dialog names this app and the target the runner is launching.
+     */
+    private fun confirmJump(target: String) {
+        val me = applicationInfo.loadLabel(packageManager).toString()
+        val them = packageManager.getApplicationInfo(target, 0).loadLabel(packageManager).toString()
+        for (root in windows.mapNotNull { it.root }) {
+            val asks = root.findAccessibilityNodeInfosByText("想要打开").any { node ->
+                node.text?.toString()?.let { me in it && them in it } == true
+            }
+            if (!asks) continue
+            root.findAccessibilityNodeInfosByText("仅打开一次").firstOrNull()
+                ?.let { actionable(it, long = false) }
+                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return
+        }
     }
 
     override fun press(target: Target, long: Boolean): Boolean {
@@ -142,5 +169,6 @@ class AgentService : AccessibilityService(), Device {
         private const val LONG_PRESS_MS = 800L
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
+        private const val LAUNCH_TIMEOUT_MS = 5_000L
     }
 }

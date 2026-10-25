@@ -19,14 +19,17 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
 
     private val worker = Executors.newSingleThreadExecutor()
+    private lateinit var service: TextView
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        service = TextView(this).apply { textSize = 16f }
         status = TextView(this).apply { textSize = 16f }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
+            addView(service)
             addView(status)
             addView(Button(context).apply {
                 text = "打开无障碍设置"
@@ -46,7 +49,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        status.text = if (AgentService.instance != null) "无障碍服务：已开启" else "无障碍服务：未开启"
+        service.text = if (AgentService.instance != null) "无障碍服务：已开启" else "无障碍服务：未开启"
     }
 
     override fun onDestroy() {

@@ -96,14 +96,18 @@ class AgentService : AccessibilityService(), Device {
      */
     private fun confirmJump() {
         val me = applicationInfo.loadLabel(packageManager).toString()
-        for (root in windows.mapNotNull { it.root }) {
+        for (root in windows.mapNotNull { it.root } + listOfNotNull(rootInActiveWindow)) {
             // Same dialog window, but the app name and "想要打开" may sit in separate text nodes.
             val asks = root.findAccessibilityNodeInfosByText("想要打开").isNotEmpty() &&
                 root.findAccessibilityNodeInfosByText(me).isNotEmpty()
             if (!asks) continue
-            root.findAccessibilityNodeInfosByText("始终打开").firstOrNull()
-                ?.let { actionable(it, long = false) }
-                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val button = root.findAccessibilityNodeInfosByText("始终打开").firstOrNull()
+                ?.let { actionable(it, long = false) } ?: return
+            // vivo's dialog (com.vivo.appfilter) may ignore node clicks; fall back to a tap at its centre.
+            if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                val rect = Rect().also(button::getBoundsInScreen)
+                press(Target(Box(rect.left, rect.top, rect.right, rect.bottom)), long = false)
+            }
             return
         }
     }

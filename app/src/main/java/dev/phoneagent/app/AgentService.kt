@@ -207,7 +207,7 @@ class AgentService : AccessibilityService(), Device {
         private const val LONG_PRESS_MS = 800L
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
-        private const val LAUNCH_TIMEOUT_MS = 5_000L
+        private const val LAUNCH_TIMEOUT_MS = 8_000L
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }
 }

@@ -15,7 +15,7 @@
      "expect": {"anyText": ["聊天设置"]}},
     {"do": "long",
      "target": {"intent": "聊天区最下面一条消息", "find": [{"listItem": -1}]},
-     "expect": {"anyText": ["复制"]},
+     "expect": {"anyText": ["复制", "转发", "多选"]},
      "ifMissing": "聊天里没有消息"},
     {"do": "tap",
      "target": {"intent": "复制", "find": [{"text": "复制"}]},

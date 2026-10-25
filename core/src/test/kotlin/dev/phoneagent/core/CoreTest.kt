@@ -120,6 +120,16 @@ class CoreTest {
     }
 
     @Test
+    fun `an image as the latest message stops at copy with the pack's reason`() {
+        val imageMenu = frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "转发", clickable = true))
+        val device = FakeDevice(douyin, qqList, qqList, qqChat, imageMenu)
+        val result = Runner(device).run(qqPack)
+        assertEquals(Outcome.MISSING, result.steps.last().outcome)
+        assertEquals(4, result.steps.last().index)
+        assertTrue(result.reason!!.contains("不是文字"), result.reason)
+    }
+
+    @Test
     fun `missing target waits out the timeout then stops with the pack's reason`() {
         val device = FakeDevice(qqChat)
         val result = Runner(device).run(

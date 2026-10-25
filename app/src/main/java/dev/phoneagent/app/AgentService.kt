@@ -5,9 +5,12 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Device
 import dev.phoneagent.core.run.Frame
@@ -24,6 +27,7 @@ import java.util.IdentityHashMap
 class AgentService : AccessibilityService(), Device {
 
     @Volatile private var lastChangeAt = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val toasts = ArrayDeque<Pair<Long, String>>()
 
     // Nodes of the last capture, to act on the real node behind a target.
@@ -80,35 +84,27 @@ class AgentService : AccessibilityService(), Device {
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         // Only report success once the app is really in front: vivo may hold it behind a jump-confirm dialog.
-        val deadline = nowMs() + LAUNCH_TIMEOUT_MS
+        var deadline = nowMs() + LAUNCH_TIMEOUT_MS
+        var asked = false
         while (nowMs() < deadline) {
             if (rootInActiveWindow?.packageName == packageName) return true
-            confirmJump()
+            // vivo blocks taps on this dialog from accessibility (node clicks and gestures), so ask the user.
+            if (!asked && jumpDialogShown()) {
+                asked = true
+                deadline = nowMs() + USER_CONFIRM_TIMEOUT_MS
+                mainHandler.post { Toast.makeText(this, "请在弹窗里点“始终打开”，任务会继续", Toast.LENGTH_LONG).show() }
+            }
             awaitSettle(deadline - nowMs())
         }
         return false
     }
 
-    /**
-     * The one exception to "only touch required apps" (owner's decision): the system dialog
-     * "<this app> 想要打开 <target>". Taps "始终打开" when the dialog names this app, so it is
-     * asked once per target; this app only ever launches the apps a pack requires.
-     */
-    private fun confirmJump() {
+    /** The system dialog "<this app> 想要打开 <target>"; the name and the phrase may sit in separate nodes. */
+    private fun jumpDialogShown(): Boolean {
         val me = applicationInfo.loadLabel(packageManager).toString()
-        for (root in windows.mapNotNull { it.root } + listOfNotNull(rootInActiveWindow)) {
-            // Same dialog window, but the app name and "想要打开" may sit in separate text nodes.
-            val asks = root.findAccessibilityNodeInfosByText("想要打开").isNotEmpty() &&
+        return (windows.mapNotNull { it.root } + listOfNotNull(rootInActiveWindow)).any { root ->
+            root.findAccessibilityNodeInfosByText("想要打开").isNotEmpty() &&
                 root.findAccessibilityNodeInfosByText(me).isNotEmpty()
-            if (!asks) continue
-            val button = root.findAccessibilityNodeInfosByText("始终打开").firstOrNull()
-                ?.let { actionable(it, long = false) } ?: return
-            // vivo's dialog (com.vivo.appfilter) may ignore node clicks; fall back to a tap at its centre.
-            if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                val rect = Rect().also(button::getBoundsInScreen)
-                press(Target(Box(rect.left, rect.top, rect.right, rect.bottom)), long = false)
-            }
-            return
         }
     }
 
@@ -173,5 +169,6 @@ class AgentService : AccessibilityService(), Device {
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 5_000L
+        private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }
 }

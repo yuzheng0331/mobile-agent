@@ -67,17 +67,19 @@ class MainActivity : Activity() {
             val lines = mutableListOf<String>()
             val result = Runner(device, observer = object : RunObserver {
                 override fun onStep(trace: StepTrace) {
+                    device.hideHint()
                     val line = timing(trace)
                     Log.i(TAG, "${pack.id} $line")
                     runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
                 }
 
-                // Shown over the target app with the service's context; this activity is in the background.
-                override fun onStuck(reason: String) = runOnUiThread {
-                    Toast.makeText(device, "$reason\n如果有弹窗，请手动关掉，20 秒内会自动重试", Toast.LENGTH_LONG).show()
+                // The service's overlay strip: vivo drops toasts while this activity is in the background.
+                override fun onStuck(reason: String) {
+                    device.showHint("Phone Agent：$reason\n如果有弹窗，请手动关掉，关掉后会自动重试（最多等 20 秒）")
                 }
             }).run(pack)
             Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
+            device.hideHint()
             runOnUiThread {
                 status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n")
                 // The target app hides this screen, so say why it stopped over it; a dialog is the usual cause.

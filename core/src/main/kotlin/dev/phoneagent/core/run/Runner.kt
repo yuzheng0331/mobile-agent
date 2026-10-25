@@ -6,7 +6,7 @@ import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Step
 import kotlinx.serialization.json.JsonObject
 
-private const val MAX_BACKS = 3
+private const val MAX_BACKS = 10
 private const val LAUNCH_CHECK_MS = 1_500L
 private const val USER_WAIT_MS = 20_000L
 
@@ -145,12 +145,18 @@ class Runner(
         }
     }
 
-    /** Up to [MAX_BACKS] presses of back, each only while a required app is in front. */
+    /**
+     * Presses back toward the start screen while a required app is in front and each press still
+     * changes the screen (a browser may be several pages deep); at most [MAX_BACKS] times.
+     */
     private fun backToStart(expect: JsonObject, requires: List<String>, timeoutMs: Long): Boolean {
         repeat(MAX_BACKS) {
-            if (device.capture().packageName !in requires || !device.back()) return false
+            val before = device.capture()
+            if (before.packageName !in requires || !device.back()) return false
             device.awaitSettle(timeoutMs)
-            if (registry.holds(device.capture(), expect)) return true
+            val after = device.capture()
+            if (registry.holds(after, expect)) return true
+            if (after.tree == before.tree) return false
         }
         return false
     }

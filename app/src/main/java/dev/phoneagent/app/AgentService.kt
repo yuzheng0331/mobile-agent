@@ -113,7 +113,8 @@ class AgentService : AccessibilityService(), Device {
     // A strip at the top of the screen, above the dialog at the bottom; touches pass through it.
     private var hint: TextView? = null
 
-    private fun showHint(text: String) = mainHandler.post {
+    /** A strip over the top of the screen; vivo drops toasts from a backgrounded app, this always shows. */
+    fun showHint(text: String) = mainHandler.post {
         val view = TextView(this).apply {
             this.text = text
             textSize = 16f
@@ -132,7 +133,7 @@ class AgentService : AccessibilityService(), Device {
         hint = view
     }
 
-    private fun hideHint() = mainHandler.post {
+    fun hideHint() = mainHandler.post {
         hint?.let { getSystemService(WindowManager::class.java).removeView(it) }
         hint = null
     }

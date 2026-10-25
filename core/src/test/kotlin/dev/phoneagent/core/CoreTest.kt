@@ -104,15 +104,22 @@ class CoreTest {
     }
 
     @Test
-    fun `launch presses back toward the start screen at most three times`() {
+    fun `launch presses back toward the start screen while each press changes the screen`() {
         val launchQq = pack("""[{"do":"launch","app":"$QQ","expect":{"anyText":["搜索"]},"timeoutMs":600}]""")
         val resumed = FakeDevice(douyin, qqChat, qqList)
         assertTrue(Runner(resumed).run(launchQq).ok)
         assertEquals(listOf("launch $QQ", "back"), resumed.actions)
 
+        // A browser five pages deep needs five presses.
+        val pages = (1..5).map { frame(QQ, UiNode(text = "第 $it 页")) }
+        val deep = FakeDevice(douyin, *pages.toTypedArray(), qqList)
+        assertTrue(Runner(deep).run(launchQq).ok)
+        assertEquals(listOf("launch $QQ") + List(5) { "back" }, deep.actions)
+
+        // A press that changes nothing ends it at once.
         val stuck = FakeDevice(qqChat, actionsChangeScreen = false)
         assertEquals(Outcome.NO_EFFECT, Runner(stuck).run(launchQq).steps.single().outcome)
-        assertEquals(listOf("launch $QQ", "back", "back", "back"), stuck.actions)
+        assertEquals(listOf("launch $QQ", "back"), stuck.actions)
     }
 
     @Test

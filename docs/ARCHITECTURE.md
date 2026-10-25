@@ -64,7 +64,7 @@ tools/   probe/probe.py（抓树/截图/对比）
 
 | 扩展点 | 形态 | v1 内置 | 状态 |
 |---|---|---|---|
-| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。M1 抽出 `Perception` 接口和 `TreePerception`，给 `Frame` 加 `id`；`ScreenshotOcrPerception` 在 M3 |
+| `Perception` | `capture(): Frame`。`Frame` 带 `id`、前台包名、可选界面树、可选截图，以及按需计算的 `ocr(region)`，同一帧同一区域只识别一次 | `TreePerception`、`ScreenshotOcrPerception`；OCR 背后再隔一层 `TextRecognizer`，方便以后换模型或加 NNAPI | 现在由 `Device.capture()` 直接取帧，`Frame` 还没有 `id` 和截图；`ocr(region)` 按区域缓存和 `TextRecognizer` 已有。`Perception` 接口、`TreePerception`、`ScreenshotOcrPerception` 和 `Frame.id` 都在 M3（微信要 OCR，那时才有第二种感知方式） |
 | `Finder` 注册表 | 名字 → 实现；每个 Finder 声明自己需要树还是 OCR，运行时据此决定截不截图；以后统一支持可选 `region`（比例矩形） | 已有：`text` `desc`（可 `exact`）`id` `listItem`（`in` 指定容器，不写就用最大的可滚动节点；负数从末尾数）`lastMessage`（聊天区最下面一条消息气泡，跳过整行宽的系统提示） | 锚点叫 `in` 还是 `under` 待定；`ocrText`、`region` 在 M3；预留 `template` |
 | `Expectation` 注册表 | 同上 | `anyText` `gone` `toast` | 已有；`screen` 在加 `ScreenDef` 时一起加 |
 | `Action` 注册表 | 名字 → 实现，和 Finder 一样可扩展（以后加滚动、左滑右滑等）；但只能由 App 代码新增并经安全评审，任务包只能引用已注册的动作。仍然不含输入与发送。内部先试 `performAction`，不行再退回手势 | `launch` `tap` `long` `back` | 已有 |
@@ -142,9 +142,9 @@ OCR 会话：只在任务包 `needs` 含 `ocr` 时创建；启动目标 App 的�
 
 | 里程碑 | 内容 | 完成标准 |
 |---|---|---|
-| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通。另含：`Perception` 接口和 `Frame.id` | QQ 任务真机 20 次 ≥ 95% |
+| M1 | 新仓库；`core` 的任务包解析、解释器、`Device` 接口；`app` 的 AgentService；QQ 任务跑通 | QQ 任务真机 20 次 ≥ 95% |
 | M2 | 夸克任务 | 同上 |
-| M3 | 微信任务（截图 + OCR + 版面）：`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
+| M3 | 微信任务（截图 + OCR + 版面）：`Perception` 接口与 `Frame.id`、`ScreenshotOcrPerception`、`ocrText`、`region` | 同上；不同最新消息类型（文字/图片/语音）都能正确停或成功 |
 | M4 | 一句话路由接进界面、运行清单 UI 与悬浮面板、`RunObserver.onStuck` 与补教、`PackSource`、安装引导与体检 | 朋友独立装好并跑通三个任务 |
 
 v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 → 动 → 等稳定 → 查预期，四段耗时轨迹）；`Device` 接口与 `AgentService`；`text/desc/id/listItem` 找法；`Router.kt`（一句话路由的核心逻辑，界面还没接）；QQ 任务包草稿。M1 已完成：`core` 拆子包；不在首屏时返回最多 3 次；内置包 id 查重（`shipped packs validate`）；`RunObserver.onStep`。
@@ -191,6 +191,7 @@ v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 �
 | M1–M3 用普通 View；M4 做正式界面时学 Jetpack Compose（只影响 `app` 的界面层，不碰 core） | 用户 |
 | `core` 的设备接口叫 `Device`，不叫 `Screen`：它还管启动 App、返回、等稳定 | 用户（2026-10-24 校准） |
 | `core` 在 M1 内拆成 `pack/ run/ route/ ext/` 子包；M1 就抽出 `Perception` 接口，给 `Frame` 加 `id` | 用户（2026-10-24 校准） |
+| `Perception` 接口和 `Frame.id` 从 M1 推到 M3：只读界面树时 `Device.capture()` 就够了，微信加 OCR 时再抽 | 用户（2026-10-25） |
 | M1 未达 20 次 ≥ 95% 的标准，例外放行；遗留项记在第 9 节“M1 状态” | 用户（2026-10-25） |
 | `PackSource` 推到 M4，和补教一起做；M1 只检查内置包 id 不重复 | 用户（2026-10-24 校准） |
 | vivo 从后台启动别的 App 时弹跳转确认框：试过自动点，vivo 拦截无障碍的节点点击和手势，所以不点，改为提示用户并等最多 30 s（不变量不变）；`launch` 改为确认目标 App 真的到了前台才算成功（最多等 5 s） | 用户（2026-10-25，真机发现） |
@@ -203,7 +204,7 @@ v0.1 已完成：新仓库；任务包解析与严格校验；解释器（找 �
 | **可回放轨迹** | 每次运行生成一份轨迹：每步命中了哪个找法、目标的边界和类型、四段耗时、每轮结果，以及前后画面的结构指纹（树结构哈希，不含文字）。只存在本机；补教成功后保存的任务包变体附带这份轨迹 | 学习模式用轨迹做优化：把总是第二个才命中的找法提到前面、收紧超时、推断出可以跳过的等待 |
 | **压缩感知时间** | 预期已经是声明式的（`expect`），解释器只要“预期满足”就进入下一步 | 用后置谓词判断动作是否生效，替代“等界面静默”：谓词一满足立即进入下一步；再加上轨迹里学到的典型耗时，目标是接近人的操作速度 |
 | **`takeScreenshot` 最小间隔** | M3 前在 Neo5 上实测 | 这个数决定以后能不能用“并行线程按固定间隔轮询识别”（类似两个项目的触发器、战斗循环），还是只能按事件触发 |
-| **后台虚拟屏** | `Device.capture` 和 `Frame` 带 `displayId`，v1 固定传主屏（M1 抽出的 `Perception` 沿用） | 通过 Shizuku 或无线调试建虚拟屏，把 App 开在副屏上执行；安卓 11 起无障碍可以按 displayId 操作和截图 |
+| **后台虚拟屏** | `Device.capture` 和 `Frame` 带 `displayId`，v1 固定传主屏（M3 抽出的 `Perception` 沿用） | 通过 Shizuku 或无线调试建虚拟屏，把 App 开在副屏上执行；安卓 11 起无障碍可以按 displayId 操作和截图 |
 | **界面树和 OCR 都靠不住的目标**（如微信视频号的纯图标按钮） | `Finder` 注册表预留兜底槽：`template`（图标模板匹配）、`icon`（小型 YOLO 图标模型）、`api`（App 自带的深链 / Intent）、`vlm`（多模态模型）；v1 遇到这类目标就停下，请用户补教 | 按调研结论和真机效果逐个接入 |
 | **v1 不做的任务包特性** | 字段在 schema 里预留：`screens.goto`、参数槽 | 路由图、参数化任务，按加速或功能需要再加 |
 | **按状态继续**（2026-10-25 用户提出） | 不留新字段：每步的 `expect` 就是“这一步之后的画面”。现在启动后不在首屏只会按返回最多 3 次 | 运行前截一帧，从后往前找 `expect` 匹配当前画面的步骤，从下一步继续；都不匹配就从 `launch` 开始。前提是每个状态能被唯一认出（`ScreenDef`）：现在的 `expect` 太宽（`anyText: 聊天设置` 任何聊天页都满足），直接用会在错的聊天里复制、还报成功。另一个更简单的备选：`launch` 加 `FLAG_ACTIVITY_CLEAR_TASK` 总从首页开始，看 M1 真机数据决定要不要换 |

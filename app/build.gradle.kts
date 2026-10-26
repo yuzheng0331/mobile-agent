@@ -34,11 +34,6 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
-// LiteRT 2.3.0 (debug only) carries Kotlin 2.4 metadata; this project's compiler is 2.0.
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    if (name == "compileDebugKotlin") compilerOptions.freeCompilerArgs.add("-Xskip-metadata-version-check")
-}
-
 dependencies {
     implementation(project(":core"))
     // Same version as core's compileOnly desktop runtime: core's OCR code is built against that API.

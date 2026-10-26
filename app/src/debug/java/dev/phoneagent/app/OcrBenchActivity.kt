@@ -2,7 +2,10 @@ package dev.phoneagent.app
 
 import android.app.Activity
 import android.graphics.BitmapFactory
+import android.content.Intent
 import android.os.Bundle
+import android.os.PerformanceHintManager
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.widget.TextView
@@ -44,6 +47,10 @@ class OcrBenchActivity : Activity() {
         val threads = list("threads")?.map { it.substringBefore("@").toInt() to it.substringAfter("@", "").ifEmpty { null } } ?: listOf(4 to null)
         // Seconds to wait before measuring, to leave time to put another app in front (vivo's background cpuset).
         val delay = intent.getStringExtra("delay")?.toLong() ?: 0
+        // The cores experiment: hold a foreground service while measuring; report to a performance hint session.
+        val fgs = intent.getStringExtra("fgs") != null
+        hint = intent.getStringExtra("hint") != null
+        if (fgs) startForegroundService(Intent(this, BenchService::class.java))
         // One measurement per process: the activity may be created again (e.g. reopened from recents)
         // while the first one still runs, and two at once compete for cores and run out of memory.
         if (running) return run { out.text = "已经在测速，结果看日志" }
@@ -60,6 +67,7 @@ class OcrBenchActivity : Activity() {
             Thread.sleep(delay * 1000)
             runCatching { if (score != null) score(score, ::log) else ocrGrid(providers, sides, batches, threads, ::log) }
                 .onFailure { log("OCR 出错：$it") }
+            if (fgs) stopService(Intent(this, BenchService::class.java))
             log("测速结束")
             running = false
         }.start()
@@ -84,8 +92,7 @@ class OcrBenchActivity : Activity() {
                 detMaxSide = side, recBatch = batch, detProvider = detProvider, recProvider = recProvider,
                 detThreads = n, recThreads = n, affinity = affinity,
             )
-            val cpuset = File("/proc/self/cgroup").readLines().firstOrNull { "cpuset" in it }?.substringAfterLast('/')
-            val name = "检测 $detProvider + 识别 $recProvider / 检测边长 ${side ?: "原图"} / 每批 $batch / $n 线程${affinity?.let { "绑 $it" } ?: ""} / $cpuset"
+            val name = "检测 $detProvider + 识别 $recProvider / 检测边长 ${side ?: "原图"} / 每批 $batch / $n 线程${affinity?.let { "绑 $it" } ?: ""} / 开始时 ${cpuset()}"
             // Logged first so a native crash still shows which combination it was.
             Log.i(TAG, "开始 $name")
             log("$name：" + runCatching {
@@ -96,15 +103,20 @@ class OcrBenchActivity : Activity() {
                     ocr.warmUp(screen.width, screen.height)
                     val warmMs = SystemClock.uptimeMillis() - start
                     // Median of RUNS whole-screen runs, with that run's phase split.
+                    val session = if (hint) getSystemService(PerformanceHintManager::class.java)?.createHintSession(intArrayOf(Process.myTid()), HINT_TARGET_NS) else null
                     val runs = List(RUNS) {
                         val t = SystemClock.uptimeMillis()
                         val hits = ocr.recognize(screen, null).map { it.text to it.bounds }.toSet()
+                        session?.reportActualWorkDuration((SystemClock.uptimeMillis() - t) * 1_000_000)
                         Triple(SystemClock.uptimeMillis() - t, hits, ocr.timings.toString())
                     }.sortedBy { it.first }
+                    session?.close()
+                    val placed = "核：${cores()}；独占核 ${Process.getExclusiveCores().toList()}" +
+                        (if (hint) "；性能提示 ${if (session == null) "不支持" else "已开"}" else "")
                     val (ms, hits, split) = runs[RUNS / 2]
                     val base = if (detProvider == OcrProvider.CPU && recProvider == OcrProvider.CPU) cpu.getOrPut(side to batch) { hits } else cpu[side to batch]
                     val same = base?.let { b -> "与 CPU 相同 ${hits.count { it in b }}/${b.size}" } ?: "没有 CPU 基准"
-                    var text = "整屏 ${hits.size} 框 $ms ms（$split）；$same；加载 $loadMs，预热 $warmMs ms"
+                    var text = "整屏 ${hits.size} 框 $ms ms（$split）；$same；加载 $loadMs，预热 $warmMs ms；$placed；结束时 ${cpuset()}"
                     if (config == OcrConfig()) {
                         val band = Box(0, screen.height * 3 / 4, screen.width, screen.height)
                         start = SystemClock.uptimeMillis()
@@ -164,7 +176,17 @@ class OcrBenchActivity : Activity() {
         return "截图：成功 $SHOTS 次，期间被拒 $refused 次；单次耗时 $costs ms；成功之间的间隔 ${okAt.zipWithNext { a, b -> b - a }} ms"
     }
 
+    private fun cpuset() = File("/proc/self/cgroup").readLines().firstOrNull { "cpuset" in it }?.substringAfterLast('/')
+
+    /** Which cores this process's threads may run on, as "cores × threads", e.g. "0-5×31". */
+    private fun cores() = File("/proc/self/task").listFiles().orEmpty().mapNotNull { t ->
+        runCatching { File(t, "status").readLines().first { it.startsWith("Cpus_allowed_list") }.substringAfter(":").trim() }.getOrNull()
+    }.groupingBy { it }.eachCount().entries.joinToString(" ") { "${it.key}×${it.value}" }
+
+    private var hint = false
+
     private companion object {
+        const val HINT_TARGET_NS = 1_000_000_000L
         @Volatile var running = false
         const val TAG = "PhoneAgent"
         const val SHOTS = 6

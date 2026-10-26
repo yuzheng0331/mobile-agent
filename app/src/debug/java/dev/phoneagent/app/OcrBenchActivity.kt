@@ -29,6 +29,7 @@ import java.io.File
  * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
  * crashes takes the process with it, so run those alone.
  * `--es score 0,2240` instead scores against the labels at those detection sides: see [score].
+ * `--es litert CPU,GPU` instead runs the GPU experiment: see [LiteRtBench].
  */
 class OcrBenchActivity : Activity() {
 
@@ -63,9 +64,17 @@ class OcrBenchActivity : Activity() {
                 runOnUiThread { out.text = lines.joinToString("\n\n") }
             }
             val score = list("score")?.map { it.toInt() }
-            if (score == null && delay == 0L) log(screenshots())
+            if (score == null && list("litert") == null && delay == 0L) log(screenshots())
             Thread.sleep(delay * 1000)
-            runCatching { if (score != null) score(score, ::log) else ocrGrid(providers, sides, batches, threads, ::log) }
+            val litert = list("litert")
+            runCatching {
+                when {
+                    litert != null -> LiteRtBench(File(getExternalFilesDir(null), "ocr/litert"), { assets.open("ocr/$it").use { s -> s.readBytes() } }, ::log)
+                        .run(screen() ?: return@runCatching log("OCR：没有截图"), litert)
+                    score != null -> score(score, ::log)
+                    else -> ocrGrid(providers, sides, batches, threads, ::log)
+                }
+            }
                 .onFailure { log("OCR 出错：$it") }
             if (fgs) stopService(Intent(this, BenchService::class.java))
             log("测速结束")
@@ -74,12 +83,7 @@ class OcrBenchActivity : Activity() {
     }
 
     private fun ocrGrid(providers: List<Pair<OcrProvider, OcrProvider>>, sides: List<Int?>, batches: List<Int>, threads: List<Pair<Int, String?>>, log: (String) -> Unit) {
-        val file = File(getExternalFilesDir(null), "ocr/screen.png")
-        if (!file.isFile) return log("OCR：没有 ${file.path}")
-        val bitmap = BitmapFactory.decodeFile(file.path)
-        val screen = Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
-            bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        })
+        val screen = screen() ?: return log("OCR：没有 files/ocr/screen.png")
         fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
         val det = bytes("det.onnx")
         val rec = bytes("rec.onnx")
@@ -174,6 +178,14 @@ class OcrBenchActivity : Activity() {
             }
         }
         return "截图：成功 $SHOTS 次，期间被拒 $refused 次；单次耗时 $costs ms；成功之间的间隔 ${okAt.zipWithNext { a, b -> b - a }} ms"
+    }
+
+    private fun screen(): Pixels? {
+        val file = File(getExternalFilesDir(null), "ocr/screen.png").takeIf { it.isFile } ?: return null
+        val bitmap = BitmapFactory.decodeFile(file.path)
+        return Pixels(bitmap.width, bitmap.height, IntArray(bitmap.width * bitmap.height).also {
+            bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        })
     }
 
     private fun cpuset() = File("/proc/self/cgroup").readLines().firstOrNull { "cpuset" in it }?.substringAfterLast('/')

@@ -34,10 +34,19 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
+// LiteRT 2.3.0 (debug only) carries Kotlin 2.4 metadata; this project's compiler is 2.0.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    if (name == "compileDebugKotlin") compilerOptions.freeCompilerArgs.add("-Xskip-metadata-version-check")
+}
+
 dependencies {
     implementation(project(":core"))
     // Same version as core's compileOnly desktop runtime: core's OCR code is built against that API.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // The GPU experiment (docs/ocr-experiments.md): the test page only, not shipped.
+    // Without Play's AI-pack delivery (WorkManager, boot receivers): models are read from a file path.
+    debugImplementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
+    debugImplementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
 }
 
 // PP-OCRv6 small (Apache-2.0) from PaddlePaddle's Hugging Face repos, pinned to a revision and

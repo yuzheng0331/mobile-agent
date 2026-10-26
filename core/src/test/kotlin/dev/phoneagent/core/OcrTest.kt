@@ -5,7 +5,6 @@ import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.ocr.boxesFrom
 import dev.phoneagent.core.ocr.ctcDecode
 import dev.phoneagent.core.ocr.detSize
-import dev.phoneagent.core.ocr.fitInto
 import dev.phoneagent.core.ocr.OcrModels
 import dev.phoneagent.core.ocr.Label
 import dev.phoneagent.core.ocr.LabelledShot
@@ -82,12 +81,10 @@ class OcrTest {
         assertEquals(1088 to 2400, detSize(1080, 2400))
         assertEquals(1024 to 96, detSize(1040, 100)) // 32.5 → 32
         assertEquals(64 to 640, detSize(30, 300)) // short side raised to 64 first
-        assertEquals(1024 to 2240, fitInto(1024 to 2240, 1024 to 2240))
-        assertEquals(1024 to 704, fitInto(detSize(1080, 773), 1024 to 2240)) // 1088 x 768 scaled by 1024 / 1088
     }
 
     @Test
-    fun `fixed shapes put the area at the top left of the canvas, channels last, and fill bucketed recognition runs`() {
+    fun `channels-last input, and fixed recognition shapes pick each line's width and fill the run`() {
         // White 1000 x 1000 screen; the area is 400 x 200 at (100, 100) with a red 4 x 4 corner.
         val screen = Pixels(1000, 1000, IntArray(1000 * 1000) { i ->
             if (i % 1000 in 100..103 && i / 1000 in 100..103) 0xFFFF0000.toInt() else -1
@@ -95,12 +92,16 @@ class OcrTest {
         val shapes = mutableListOf<List<Long>>()
         var detInput = FloatArray(0)
         val models = object : OcrModels {
-            override val channelsLast = true
+            override fun channelsLast(shape: LongArray) = true
             override fun detect(input: FloatBuffer, shape: LongArray): FloatArray {
                 shapes += shape.toList()
                 detInput = FloatArray(input.remaining()).also { input.duplicate().get(it) }
                 val w = shape[3].toInt()
-                return FloatArray(shape[2].toInt() * w).also { p -> for (y in 40 until 60) for (x in 80 until 240) p[y * w + x] = 0.9f }
+                // A short line, then a long one that needs the 640 width.
+                return FloatArray(shape[2].toInt() * w).also { p ->
+                    for (y in 40 until 60) for (x in 80 until 240) p[y * w + x] = 0.9f
+                    for (y in 100 until 120) for (x in 0 until 380) p[y * w + x] = 0.9f
+                }
             }
 
             // Every slot reads class 1 ("复") at its first of two steps.
@@ -111,14 +112,16 @@ class OcrTest {
 
             override fun close() {}
         }
-        val ocr = PpOcr(models, listOf("复"), OcrConfig(detCanvas = 320 to 320, recWidths = listOf(320, 640)))
+        val ocr = PpOcr(models, listOf("复"), OcrConfig(recRuns = mapOf(320 to 6, 640 to 1)))
         val hits = ocr.recognize(screen, Box(100, 100, 500, 300))
-        // detSize gives 384 x 192, scaled to 320 x 160 to fit; the map's block grows and scales back by 400 / 320.
-        assertEquals(listOf(listOf<Long>(1, 3, 320, 320), listOf<Long>(6, 3, 48, 320)), shapes)
-        assertEquals(listOf(TextHit("复", Box(184, 134, 415, 190), 1f)), hits)
-        // NHWC, BGR: the first pixel is the red corner; rows below the scaled area are zero.
+        // detSize gives 384 x 192; the map's blocks grow and scale back by 400 / 384. Each line in a
+        // run of its width's size: the short one alone in a run of six, the long one in a run of one.
+        assertEquals(listOf(listOf<Long>(1, 3, 192, 384), listOf<Long>(6, 3, 48, 320), listOf<Long>(1, 3, 48, 640)), shapes)
+        assertEquals(2, hits.size)
+        assertEquals(TextHit("复", Box(170, 128, 362, 175), 1f), hits.first())
+        // NHWC, BGR: the first pixel is the red corner; white from the fifth on.
         listOf(-0.485f / 0.229f, -0.456f / 0.224f, (1 - 0.406f) / 0.225f).forEachIndexed { c, v -> assertEquals(v, detInput[c], 1e-5f) }
-        assertTrue((170 * 320 * 3 until 171 * 320 * 3).all { detInput[it] == 0f })
+        assertEquals((1 - 0.485f) / 0.229f, detInput[5 * 3], 1e-5f)
     }
 
     @Test
@@ -281,10 +284,8 @@ class OcrTest {
             // side=0 is full size; no side key keeps the default.
             detMaxSide = if ("side" in v) v.getValue("side").toInt().takeIf { it > 0 } else OcrConfig().detMaxSide,
             recBatch = v["batch"]?.toInt() ?: OcrConfig().recBatch,
-            // widths=320/1280
-            recWidths = v["widths"]?.split("/")?.map { it.toInt() },
-            // canvas=1024x2240
-            detCanvas = v["canvas"]?.split("x")?.let { it[0].toInt() to it[1].toInt() },
+            // widths=320/1280 (runs of batch lines), or widths=320x6/1280x1
+            recRuns = v["widths"]?.split("/")?.associate { w -> w.substringBefore("x").toInt() to (w.substringAfter("x", "").toIntOrNull() ?: v["batch"]?.toInt() ?: OcrConfig().recBatch) },
         )
     }
 

@@ -15,7 +15,7 @@ build() {
     "$ONNX2TF" -i "$TMP/$2.onnx" -o "$TMP/$2" -n > "$TMP/$2.log" 2>&1 || { cat "$TMP/$2.log"; exit 1; }
     cp "$TMP/$2/$2_float32.tflite" "$OCR/litert/$2.tflite"
 }
-build det det 1,3,2240,1024
-for w in 320 640 960 1280; do build rec "rec$w" "6,3,48,$w"; done
+build rec rec320 6,3,48,320
+for w in 640 960 1280; do build rec "rec$w" "1,3,48,$w"; done
 rm -rf "$TMP"
 ls -l "$OCR/litert"

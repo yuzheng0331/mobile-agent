@@ -33,17 +33,12 @@ data class OcrConfig(
     /** Lines per recognition run; lines in a run are padded to the widest. */
     val recBatch: Int = 6,
     /**
-     * Fixed recognition widths, ascending, for runtimes that take fixed shapes: a run is padded to
-     * the first that fits, and lines wider than the last are squeezed to it. Null: no padding
-     * beyond the widest line.
+     * Fixed recognition shapes, width to lines per run, for runtimes that take fixed shapes: a
+     * line goes to the narrowest width that fits it (the widest squeezes the rest), a run holds
+     * at most that width's lines and is padded to exactly that. Null: runs of [recBatch] lines,
+     * padded to their widest.
      */
-    val recWidths: List<Int>? = null,
-    /**
-     * Fixed detection input (width, height) for runtimes that take fixed shapes: the area, sized
-     * as without it and scaled down further if it still does not fit, sits at the top left and
-     * the rest is zero. Null: the input is the area's own size.
-     */
-    val detCanvas: Pair<Int, Int>? = null,
+    val recRuns: Map<Int, Int>? = null,
     val detThreads: Int = 4,
     val recThreads: Int = 4,
     /** Where each graph runs (the two phases' times add up, so each can take its fastest). XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
@@ -67,24 +62,24 @@ class OcrTimings {
 
 /**
  * Runs PpOcr's two models. Inputs are float tensors of the shape given, `[n, 3, h, w]`, laid out
- * NCHW or, when [channelsLast], NHWC; the result is the flat output.
+ * NCHW or, when [channelsLast] says so for that shape, NHWC; the result is the flat output.
  */
 interface OcrModels : AutoCloseable {
-    val channelsLast: Boolean get() = false
+    fun channelsLast(shape: LongArray): Boolean = false
     fun detect(input: FloatBuffer, shape: LongArray): FloatArray
     fun read(input: FloatBuffer, shape: LongArray): FloatArray
 }
 
-/** Both models on ONNX Runtime sessions, any input size; threads and providers from [config]. */
-class OrtModels(det: ByteArray, rec: ByteArray, config: OcrConfig = OcrConfig()) : OcrModels {
+/** Both models (or detection alone, without [rec]) on ONNX Runtime sessions, any input size; threads and providers from [config]. */
+class OrtModels(det: ByteArray, rec: ByteArray?, config: OcrConfig = OcrConfig()) : OcrModels {
     private val env = OrtEnvironment.getEnvironment()
     private val detOptions = options(config.detThreads, config.detProvider, config.affinity)
     private val recOptions = options(config.recThreads, config.recProvider, config.affinity)
     private val det = env.createSession(det, detOptions)
-    private val rec = env.createSession(rec, recOptions)
+    private val rec = rec?.let { env.createSession(it, recOptions) }
 
     override fun detect(input: FloatBuffer, shape: LongArray) = run(det, input, shape)
-    override fun read(input: FloatBuffer, shape: LongArray) = run(rec, input, shape)
+    override fun read(input: FloatBuffer, shape: LongArray) = run(checkNotNull(rec) { "made without recognition" }, input, shape)
 
     private fun run(session: OrtSession, input: FloatBuffer, shape: LongArray): FloatArray =
         OnnxTensor.createTensor(env, input, shape).use { tensor ->
@@ -97,7 +92,7 @@ class OrtModels(det: ByteArray, rec: ByteArray, config: OcrConfig = OcrConfig())
 
     override fun close() {
         det.close()
-        rec.close()
+        rec?.close()
         detOptions.close()
         recOptions.close()
     }
@@ -108,6 +103,9 @@ class OrtModels(det: ByteArray, rec: ByteArray, config: OcrConfig = OcrConfig())
             setIntraOpNumThreads(if (provider == OcrProvider.XNNPACK) 1 else threads)
             // An idle pool that spins steals cores from the app being driven; sleeping measured faster.
             addConfigEntry("session.intra_op.allow_spinning", "0")
+            // The arena keeps the biggest run's buffers for good: about 1 GB after one whole-screen
+            // detection on the phone, which got our background activity killed for memory.
+            setCPUArenaAllocator(false)
             affinity?.let { addConfigEntry("session.intra_op_thread_affinities", it) }
             when (provider) {
                 OcrProvider.CPU -> {}
@@ -134,7 +132,6 @@ class PpOcr(
 
     val timings = OcrTimings()
     private val alphabet = listOf("blank") + dictionary + " "
-    private val channelsLast = models.channelsLast
 
     // A full-screen detection input is ~30 MB; allocating it per call costs more than inference setup.
     private var detBuffer = floatBuffer(0)
@@ -156,10 +153,10 @@ class PpOcr(
     /** Runs both models once at the given screen size, so the first real call doesn't pay for setup. */
     @Synchronized
     fun warmUp(width: Int, height: Int) {
-        val (w, h) = config.detCanvas ?: detSize(width, height, config.detMaxSide)
+        val (w, h) = detSize(width, height, config.detMaxSide)
         models.detect(floatBuffer(3 * w * h), longArrayOf(1, 3, h.toLong(), w.toLong()))
-        for (recW in config.recWidths ?: listOf(REC_BASE_WIDTH))
-            models.read(floatBuffer(config.recBatch * 3 * REC_HEIGHT * recW), longArrayOf(config.recBatch.toLong(), 3, REC_HEIGHT.toLong(), recW.toLong()))
+        for ((recW, n) in config.recRuns ?: mapOf(REC_BASE_WIDTH to config.recBatch))
+            models.read(floatBuffer(n * 3 * REC_HEIGHT * recW), longArrayOf(n.toLong(), 3, REC_HEIGHT.toLong(), recW.toLong()))
     }
 
     override fun close() = models.close()
@@ -167,23 +164,20 @@ class PpOcr(
     private fun detect(src: Pixels, area: Box): List<Box> {
         val width = area.right - area.left
         val height = area.bottom - area.top
-        val (w, h) = detSize(width, height, config.detMaxSide).let { size -> config.detCanvas?.let { fitInto(size, it) } ?: size }
-        // What the model sees: the area alone, or the area at the top left of the fixed canvas.
-        val (inW, inH) = config.detCanvas ?: (w to h)
-        val size = 3 * inW * inH
+        val (w, h) = detSize(width, height, config.detMaxSide)
+        val size = 3 * w * h
         if (detBuffer.capacity() < size) detBuffer = floatBuffer(size)
         val input = detBuffer.duplicate().apply { position(0); limit(size) }.slice()
         var t = System.nanoTime()
-        // The canvas outside the area must be zero, whatever the last call left there.
-        if (inW != w || inH != h) input.put(FloatArray(size)).rewind()
-        val (stride, plane) = layout(inW, inH)
-        resize(src, area, w, h, input, 0, stride, plane, DET_MEAN, DET_STD, channelsLast)
+        val shape = longArrayOf(1, 3, h.toLong(), w.toLong())
+        val nhwc = models.channelsLast(shape)
+        val (stride, plane) = layout(w, h, nhwc)
+        resize(src, area, w, h, input, 0, stride, plane, DET_MEAN, DET_STD, nhwc)
         timings.detPrep += lap(t).also { t = System.nanoTime() }
-        val prob = models.detect(input, longArrayOf(1, 3, inH.toLong(), inW.toLong()))
+        val prob = models.detect(input, shape)
         timings.detRun += lap(t).also { t = System.nanoTime() }
-        // The map's pixels stand for area / scaled area pixels each, so the whole map spans that much.
-        return boxesFrom(prob, inW, inH, inW * width / w, inH * height / h, config.boxThresh, config.unclipRatio)
-            .mapNotNull { b -> clip(Box(b.left + area.left, b.top + area.top, b.right + area.left, b.bottom + area.top), area) }
+        return boxesFrom(prob, w, h, width, height, config.boxThresh, config.unclipRatio)
+            .map { Box(it.left + area.left, it.top + area.top, it.right + area.left, it.bottom + area.top) }
             .also { timings.boxes += lap(t) }
     }
 
@@ -194,22 +188,26 @@ class PpOcr(
         timings.recPrep += lap(t)
         val ratio = { i: Int -> crops[i].width.toDouble() / crops[i].height }
         val lines = arrayOfNulls<Pair<String, Float>>(crops.size)
-        for (batch in crops.indices.sortedBy(ratio).chunked(config.recBatch)) {
+        val fit = { i: Int -> (REC_HEIGHT * max(REC_BASE_WIDTH.toDouble() / REC_HEIGHT, ratio(i))).toInt() }
+        val widths = config.recRuns?.keys?.sorted()
+        val fixedW = { i: Int -> widths!!.firstOrNull { it >= fit(i) } ?: widths.last() }
+        for (batch in runs(crops.indices.sortedBy(ratio)) { i -> config.recRuns?.getValue(fixedW(i)) ?: config.recBatch }) {
             t = System.nanoTime()
-            val fitW = (REC_HEIGHT * max(REC_BASE_WIDTH.toDouble() / REC_HEIGHT, batch.maxOf(ratio))).toInt()
-            val batchW = config.recWidths?.let { widths -> widths.firstOrNull { it >= fitW } ?: widths.last() } ?: fitW
-            // Fixed shapes also mean full batches: the empty slots stay zero.
-            val slots = if (config.recWidths != null) config.recBatch else batch.size
+            // Sorted by ratio, so the last line is the widest.
+            val batchW = if (widths != null) fixedW(batch.last()) else fit(batch.last())
+            // Fixed shapes also mean full runs: the empty slots stay zero.
+            val slots = config.recRuns?.getValue(batchW) ?: batch.size
             val plane = REC_HEIGHT * batchW
             // Zero padding to the right of narrower crops, as in PaddleOCR.
             val input = floatBuffer(slots * 3 * plane)
-            val (stride, channelPlane) = layout(batchW, REC_HEIGHT)
+            val shape = longArrayOf(slots.toLong(), 3, REC_HEIGHT.toLong(), batchW.toLong())
+            val nhwc = models.channelsLast(shape)
+            val (stride, channelPlane) = layout(batchW, REC_HEIGHT, nhwc)
             batch.forEachIndexed { slot, i ->
                 val c = crops[i]
                 val w = min(ceil(REC_HEIGHT * ratio(i)).toInt(), batchW)
-                resize(c, Box(0, 0, c.width, c.height), w, REC_HEIGHT, input, slot * 3 * plane, stride, channelPlane, REC_MEAN, REC_STD, channelsLast)
+                resize(c, Box(0, 0, c.width, c.height), w, REC_HEIGHT, input, slot * 3 * plane, stride, channelPlane, REC_MEAN, REC_STD, nhwc)
             }
-            val shape = longArrayOf(slots.toLong(), 3, REC_HEIGHT.toLong(), batchW.toLong())
             timings.recPrep += lap(t).also { t = System.nanoTime() }
             val scores = models.read(input, shape)
             timings.recRun += lap(t).also { t = System.nanoTime() }
@@ -224,8 +222,21 @@ class PpOcr(
         return lines.toList()
     }
 
-    /** Row stride and channel plane, in floats, of a [w] x [h] image in this layout (NHWC rows are 3 floats a pixel). */
-    private fun layout(w: Int, h: Int) = if (channelsLast) 3 * w to 1 else w to w * h
+    /** [lines] cut in order into runs, each as long as [limit] of its last line allows. */
+    private fun runs(lines: List<Int>, limit: (Int) -> Int): List<List<Int>> {
+        val runs = mutableListOf<List<Int>>()
+        var start = 0
+        while (start < lines.size) {
+            var end = start + 1
+            while (end < lines.size && end - start < limit(lines[end])) end++
+            runs += lines.subList(start, end)
+            start = end
+        }
+        return runs
+    }
+
+    /** Row stride and channel plane, in floats, of a [w] x [h] image (NHWC rows are 3 floats a pixel). */
+    private fun layout(w: Int, h: Int, nhwc: Boolean) = if (nhwc) 3 * w to 1 else w to w * h
 
     private companion object {
         val DET_MEAN = floatArrayOf(0.485f, 0.456f, 0.406f)
@@ -263,15 +274,6 @@ internal fun detSize(width: Int, height: Int, maxSide: Int? = null): Pair<Int, I
         h = (h * down).toInt()
     }
     return max(Math.rint(w / 32.0).toInt() * 32, 32) to max(Math.rint(h / 32.0).toInt() * 32, 32)
-}
-
-/** [size] scaled down, keeping multiples of 32, until it fits in [canvas]; unchanged if it fits. */
-internal fun fitInto(size: Pair<Int, Int>, canvas: Pair<Int, Int>): Pair<Int, Int> {
-    val (w, h) = size
-    val (cw, ch) = canvas
-    if (w <= cw && h <= ch) return size
-    val k = min(cw.toDouble() / w, ch.toDouble() / h)
-    return max(floor(w * k / 32).toInt() * 32, 32) to max(floor(h * k / 32).toInt() * 32, 32)
 }
 
 /**
@@ -350,10 +352,8 @@ internal fun ctcDecode(scores: FloatArray, offset: Int, steps: Int, classes: Int
     return if (kept == 0) null else text.toString() to (sum / kept).toFloat()
 }
 
-private fun clip(box: Box, pixels: Pixels) = clip(box, Box(0, 0, pixels.width, pixels.height))
-
-private fun clip(box: Box, bounds: Box): Box? {
-    val clipped = Box(max(box.left, bounds.left), max(box.top, bounds.top), min(box.right, bounds.right), min(box.bottom, bounds.bottom))
+private fun clip(box: Box, pixels: Pixels): Box? {
+    val clipped = Box(max(box.left, 0), max(box.top, 0), min(box.right, pixels.width), min(box.bottom, pixels.height))
     return clipped.takeIf { it.right > it.left && it.bottom > it.top }
 }
 

@@ -3,6 +3,7 @@ package dev.phoneagent.app
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.os.Debug
 import android.os.SystemClock
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
@@ -31,7 +32,9 @@ internal class LiteRtBench(private val dir: File, private val onnx: (String) -> 
         for (entry in graphs) {
             val (file, n) = entry.split(":").let { it[0] to it[1].toInt() }
             val graph = if (file.startsWith("det")) Graph(file, "det", 1, DET_H, DET_W, sample(screen, listOf(0 to 0), screen.width, screen.height, DET_W, DET_H, DET_MEAN, DET_STD))
-            else Graph(file, "rec", n, REC_H, REC_W, sample(screen, strips.take(n), 760, 60, REC_W, REC_H, REC_MEAN, REC_STD))
+            else file.removePrefix("rec").toIntOrNull().let { w -> w ?: REC_W }.let { w ->
+                Graph(file, "rec", n, REC_H, w, sample(screen, strips.take(n), 760, 60, w, REC_H, REC_MEAN, REC_STD))
+            }
             val (refMs, ref) = graph.onnx()
             log("${graph.name} onnxruntime CPU 4 线程：$refMs ms")
             for (variant in variants) log("${graph.name} LiteRT $variant：" + runCatching { graph.liteRt(env, variant, ref) }.getOrElse { "出错 ${it.javaClass.simpleName}: ${it.message?.take(200)}" })
@@ -69,6 +72,7 @@ internal class LiteRtBench(private val dir: File, private val onnx: (String) -> 
                     gpuOptions = CompiledModel.GpuOptions(precision = CompiledModel.GpuOptions.Precision.valueOf(it))
                 }
             }
+            val before = graphicsKb()
             var start = SystemClock.uptimeMillis()
             val model = CompiledModel.create(File(dir, "$name.tflite").path, options, env)
             val createMs = SystemClock.uptimeMillis() - start
@@ -81,7 +85,7 @@ internal class LiteRtBench(private val dir: File, private val onnx: (String) -> 
                 outputs[0].readFloat()
                 val firstMs = SystemClock.uptimeMillis() - start
                 val (ms, out) = timed { inputs[0].writeFloat(nhwc); model.run(inputs, outputs); outputs[0].readFloat() }
-                return "$ms ms（建模 $createMs，首次 $firstMs ms）；${compare(out, ref)}"
+                return "$ms ms（建模 $createMs，首次 $firstMs ms，显存 +${(graphicsKb() - before) / 1024} MB）；${compare(out, ref)}"
             } finally {
                 (inputs + outputs).forEach { it.close() }
                 model.close()
@@ -97,6 +101,8 @@ internal class LiteRtBench(private val dir: File, private val onnx: (String) -> 
             return "最大差 %.4f，最可能的字不同 %d / %d 步".format(maxDiff, (0 until steps).count { best(out, it) != best(ref, it) }, steps)
         }
     }
+
+    private fun graphicsKb() = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }.getMemoryStat("summary.graphics").toInt()
 
     private fun timed(block: () -> FloatArray): Pair<Long, FloatArray> {
         var out = FloatArray(0)

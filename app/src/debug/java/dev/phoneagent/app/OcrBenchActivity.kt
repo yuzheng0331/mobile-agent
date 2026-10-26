@@ -40,6 +40,14 @@ class OcrBenchActivity : Activity() {
             ?: OcrProvider.entries.map { it to it }
         val sides = list("sides")?.map { it.toInt().takeIf { side -> side > 0 } } ?: DET_SIDES
         val batches = list("batches")?.map { it.toInt() } ?: REC_BATCHES
+        // "4", "2@6", "3@5;6": threads for both graphs, then ORT affinities (1-based cores).
+        val threads = list("threads")?.map { it.substringBefore("@").toInt() to it.substringAfter("@", "").ifEmpty { null } } ?: listOf(4 to null)
+        // Seconds to wait before measuring, to leave time to put another app in front (vivo's background cpuset).
+        val delay = intent.getStringExtra("delay")?.toLong() ?: 0
+        // One measurement per process: the activity may be created again (e.g. reopened from recents)
+        // while the first one still runs, and two at once compete for cores and run out of memory.
+        if (running) return run { out.text = "已经在测速，结果看日志" }
+        running = true
         Thread {
             val lines = mutableListOf<String>()
             fun log(line: String) {
@@ -48,14 +56,16 @@ class OcrBenchActivity : Activity() {
                 runOnUiThread { out.text = lines.joinToString("\n\n") }
             }
             val score = list("score")?.map { it.toInt() }
-            if (score == null) log(screenshots())
-            runCatching { if (score != null) score(score, ::log) else ocrGrid(providers, sides, batches, ::log) }
+            if (score == null && delay == 0L) log(screenshots())
+            Thread.sleep(delay * 1000)
+            runCatching { if (score != null) score(score, ::log) else ocrGrid(providers, sides, batches, threads, ::log) }
                 .onFailure { log("OCR 出错：$it") }
             log("测速结束")
+            running = false
         }.start()
     }
 
-    private fun ocrGrid(providers: List<Pair<OcrProvider, OcrProvider>>, sides: List<Int?>, batches: List<Int>, log: (String) -> Unit) {
+    private fun ocrGrid(providers: List<Pair<OcrProvider, OcrProvider>>, sides: List<Int?>, batches: List<Int>, threads: List<Pair<Int, String?>>, log: (String) -> Unit) {
         val file = File(getExternalFilesDir(null), "ocr/screen.png")
         if (!file.isFile) return log("OCR：没有 ${file.path}")
         val bitmap = BitmapFactory.decodeFile(file.path)
@@ -69,9 +79,13 @@ class OcrBenchActivity : Activity() {
         // What the CPU read at the same side and batch: other providers must read the same.
         // Only meaningful when a CPU+CPU run of that side and batch came first in this run.
         val cpu = mutableMapOf<Pair<Int?, Int>, Set<Pair<String, Box>>>()
-        for ((detProvider, recProvider) in providers) for (side in sides) for (batch in batches) {
-            val config = OcrConfig(detMaxSide = side, recBatch = batch, detProvider = detProvider, recProvider = recProvider)
-            val name = "检测 $detProvider + 识别 $recProvider / 检测边长 ${side ?: "原图"} / 每批 $batch"
+        for ((detProvider, recProvider) in providers) for (side in sides) for (batch in batches) for ((n, affinity) in threads) {
+            val config = OcrConfig(
+                detMaxSide = side, recBatch = batch, detProvider = detProvider, recProvider = recProvider,
+                detThreads = n, recThreads = n, affinity = affinity,
+            )
+            val cpuset = File("/proc/self/cgroup").readLines().firstOrNull { "cpuset" in it }?.substringAfterLast('/')
+            val name = "检测 $detProvider + 识别 $recProvider / 检测边长 ${side ?: "原图"} / 每批 $batch / $n 线程${affinity?.let { "绑 $it" } ?: ""} / $cpuset"
             // Logged first so a native crash still shows which combination it was.
             Log.i(TAG, "开始 $name")
             log("$name：" + runCatching {
@@ -151,6 +165,7 @@ class OcrBenchActivity : Activity() {
     }
 
     private companion object {
+        @Volatile var running = false
         const val TAG = "PhoneAgent"
         const val SHOTS = 6
         const val RETRY_MS = 50L

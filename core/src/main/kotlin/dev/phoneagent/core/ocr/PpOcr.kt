@@ -37,6 +37,12 @@ data class OcrConfig(
     /** Where each graph runs (the two phases' times add up, so each can take its fastest). XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
     val detProvider: OcrProvider = OcrProvider.CPU,
     val recProvider: OcrProvider = OcrProvider.CPU,
+    /**
+     * ORT's `session.intra_op_thread_affinities` for both pools: one entry per pool thread
+     * (threads - 1; the calling thread is not pinned), 1-based core ids, e.g. "5;6". Null lets
+     * the OS place them. For the experiments on vivo's background cpuset (cores 0–5).
+     */
+    val affinity: String? = null,
 )
 
 enum class OcrProvider { CPU, XNNPACK, NNAPI }
@@ -60,8 +66,8 @@ class PpOcr(
 ) : TextRecognizer, AutoCloseable {
 
     private val env = OrtEnvironment.getEnvironment()
-    private val detOptions = options(config.detThreads, config.detProvider)
-    private val recOptions = options(config.recThreads, config.recProvider)
+    private val detOptions = options(config.detThreads, config.detProvider, config.affinity)
+    private val recOptions = options(config.recThreads, config.recProvider, config.affinity)
     private val det = env.createSession(det, detOptions)
     private val rec = env.createSession(rec, recOptions)
     val timings = OcrTimings()
@@ -170,11 +176,12 @@ class PpOcr(
         const val REC_HEIGHT = 48
         const val REC_BASE_WIDTH = 320
 
-        fun options(threads: Int, provider: OcrProvider) = OrtSession.SessionOptions().apply {
+        fun options(threads: Int, provider: OcrProvider, affinity: String?) = OrtSession.SessionOptions().apply {
             // XNNPACK brings its own pool; ORT's then only runs the ops XNNPACK lacks (ORT docs: keep it at 1).
             setIntraOpNumThreads(if (provider == OcrProvider.XNNPACK) 1 else threads)
             // An idle pool that spins steals cores from the app being driven; sleeping measured faster.
             addConfigEntry("session.intra_op.allow_spinning", "0")
+            affinity?.let { addConfigEntry("session.intra_op_thread_affinities", it) }
             when (provider) {
                 OcrProvider.CPU -> {}
                 OcrProvider.XNNPACK -> addXnnpack(mapOf("intra_op_num_threads" to "$threads"))

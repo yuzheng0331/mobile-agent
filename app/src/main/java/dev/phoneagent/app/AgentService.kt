@@ -144,7 +144,7 @@ class AgentService : AccessibilityService(), Device {
             }
 
             override fun onFailure(errorCode: Int) {
-                tooSoon = errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_INVALID
+                tooSoon = errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
                 if (!tooSoon) Log.i("PhoneAgent", "screenshot failed: $errorCode")
                 done.countDown()
             }

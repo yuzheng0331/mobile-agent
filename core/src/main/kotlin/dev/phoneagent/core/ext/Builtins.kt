@@ -22,6 +22,8 @@ object Builtins {
             "id" to byField { it.id },
             "listItem" to Finder(::listItem),
             "lastMessage" to Finder(::lastMessage),
+            // The same for an empty tree, from the screenshot's layout (WeChat).
+            "lastBubble" to Finder { frame, _, _ -> frame.screenshot?.let(::lastBubble)?.let { Target(it) } },
             "ocrText" to object : Finder {
                 override val needs = setOf("ocr")
                 override fun find(frame: Frame, spec: JsonObject, registry: Registry) = ocrText(frame, spec)

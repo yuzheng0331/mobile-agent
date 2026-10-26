@@ -372,4 +372,22 @@ class CoreTest {
         val badRegion = """[{"do":"tap","target":{"intent":"x","find":[{"ocrText":"复制","region":[0,0.5,1]}]}}]"""
         assertEquals(1, validate(pack(badRegion, needs = """["ocr"]""")).size)
     }
+
+    @Test
+    fun `lastBubble finds the bubble beside the lowest avatar and skips notices and voice extras`() {
+        val w = 1080
+        val screen = IntArray(w * 2400) { 0xFF111111.toInt() }
+        fun fill(l: Int, t: Int, r: Int, b: Int, c: Int) { for (y in t until b) for (x in l until r) screen[y * w + x] = c }
+        val avatar = 0xFFE090B0.toInt()
+        val bubble = 0xFF303030.toInt()
+        fun find() = Builtins.registry.find(Frame("p", null, shooter = { Pixels(w, 2400, screen) }), Json.parseToJsonElement("""{"lastBubble":true}""").jsonObject)?.bounds
+        assertNull(find())
+        fill(36, 1000, 144, 1108, avatar); fill(170, 1000, 400, 1108, bubble) // received text
+        fill(936, 1300, 1044, 1408, avatar); fill(700, 1300, 906, 1408, 0xFF40A060.toInt()) // sent text
+        fill(300, 1500, 780, 1540, bubble) // centred system notice: no avatar
+        assertEquals(Box(700, 1300, 906, 1408), find())
+        fill(36, 1700, 144, 1808, avatar); fill(170, 1700, 372, 1808, bubble) // voice ...
+        fill(395, 1740, 410, 1760, 0xFFE04040.toInt()); fill(450, 1730, 576, 1770, bubble) // ... unread dot, 转文字
+        assertEquals(Box(170, 1700, 372, 1808), find())
+    }
 }

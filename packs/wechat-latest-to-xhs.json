@@ -26,6 +26,7 @@
     {"do": "tap",
      "target": {"intent": "复制", "find": [{"ocrText": "复制", "exact": true}]},
      "expect": {"toast": "已复制"},
+     "timeoutMs": 2000,
      "ifMissing": "最新消息不是文字（图片、语音或表情），不能复制"},
     {"do": "launch", "app": "com.xingin.xhs"}
   ]

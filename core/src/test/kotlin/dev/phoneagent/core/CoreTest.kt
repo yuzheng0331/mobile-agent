@@ -441,4 +441,20 @@ class CoreTest {
         assertTrue(result.ok, result.reason)
         assertEquals(at[0], at[1])
     }
+
+    @Test
+    fun `a target missing on the screen the previous step confirmed stops at once, without asking the user`() {
+        val device = FakeDevice(qqChat, frame(QQ, UiNode(desc = "聊天设置"), UiNode(text = "转发")))
+        var stuck = 0
+        val result = Runner(device, observer = object : RunObserver {
+            override fun onStep(trace: StepTrace) {}
+            override fun onStuck(reason: String) { stuck++ }
+        }).run(
+            pack("""[{"do":"long","target":{"intent":"m","find":[{"lastMessage":true}]},"expect":{"anyText":["转发"]}},
+                     {"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]},"ifMissing":"不是文字"}]"""),
+        )
+        assertEquals(0, stuck)
+        assertEquals(Outcome.MISSING, result.steps.last().outcome)
+        assertTrue(device.nowMs() < 6_000, "waited ${device.nowMs()} ms")
+    }
 }

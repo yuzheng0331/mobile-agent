@@ -57,6 +57,9 @@ class Runner(
      */
     private var settled: Frame? = null
 
+    /** The last frame a find or check looked at. */
+    private var lastSeen: Frame? = null
+
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
         for ((index, step) in pack.steps.withIndex()) {
@@ -64,7 +67,10 @@ class Runner(
             var trace = runStep(index, step, pack.requires, screen)
             // Usually an app dialog (update, ad) is in the way: ask the user to close it, wait for
             // the screen to change, then try the step once more. Nothing is tapped meanwhile.
-            if (trace.outcome != Outcome.SUCCESS && trace.outcome != Outcome.ACTION_FAILED) {
+            // Missing on the screen the previous step confirmed: nothing is in the way, the target
+            // just isn't there (e.g. no 复制 for a voice message), so stop now instead of waiting.
+            val confirmed = trace.outcome == Outcome.MISSING && screen != null && lastSeen?.let { registry.holds(it, screen) } == true
+            if (trace.outcome != Outcome.SUCCESS && trace.outcome != Outcome.ACTION_FAILED && !confirmed) {
                 traces += trace
                 observer.onStep(trace)
                 observer.onStuck(reason(index, step, trace.outcome))
@@ -173,9 +179,17 @@ class Runner(
     private fun <T : Any> waitFor(timeoutMs: Long, first: Frame? = null, probe: (Frame) -> T?): T? {
         val deadline = device.nowMs() + timeoutMs
         var frame = first
+        var seen: Frame? = null
         while (true) {
-            probe(frame ?: device.capture())?.let { return it }
+            val now = frame ?: device.capture()
             frame = null
+            // The same screen gives the same answer: skip it rather than run OCR again (~3 s).
+            val unchanged = seen != null && now.packageName == seen.packageName && now.toasts == seen.toasts && now.sameScreen(seen)
+            if (!unchanged) {
+                seen = now
+                lastSeen = now
+                probe(now)?.let { return it }
+            }
             val left = deadline - device.nowMs()
             if (left <= 0) return null
             device.awaitSettle(left)

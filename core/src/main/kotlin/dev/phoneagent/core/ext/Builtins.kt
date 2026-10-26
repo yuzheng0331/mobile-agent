@@ -70,17 +70,16 @@ object Builtins {
     }
 
     /**
-     * Text read by OCR, for apps whose tree has no text (WeChat). `region` is
-     * `[left, top, right, bottom]` as fractions of the screen, so packs work at any
-     * resolution; only that part is detected and read. Matching is the same as `text`
+     * Text read by OCR, for apps whose tree has no text (WeChat). `region` or `near` (see
+     * [area]) limits it to part of the screen. Matching is the same as `text`
      * (whitespace ignored, since OCR spaces vary). The target is a point: no node.
      */
     private fun ocrText(frame: Frame, spec: JsonObject): Target? {
         val want = spec.getValue("ocrText").jsonPrimitive.content.filterNot(Char::isWhitespace)
         val exact = spec["exact"]?.jsonPrimitive?.boolean == true
-        val region = spec["region"]?.let(::region)
-        val shot = frame.screenshot ?: return null
-        val hits = frame.ocr(region?.let { pixelsOf(it, shot.width, shot.height) }).map { it to it.text.filterNot(Char::isWhitespace) }
+        val box = area(frame, spec)
+        frame.screenshot ?: return null
+        val hits = frame.ocr(box).map { it to it.text.filterNot(Char::isWhitespace) }
         val hit = hits.firstOrNull { it.second == want } ?: if (exact) null else hits.firstOrNull { want in it.second }
         return hit?.let { Target(it.first.bounds) }
     }
@@ -145,16 +144,30 @@ object Builtins {
         require(r.size == 4 && r.all { it in 0.0..1.0 } && r[0] < r[2] && r[1] < r[3]) { "region is [left, top, right, bottom], fractions 0..1" }
     }
 
-    private fun pixelsOf(r: List<Double>, w: Int, h: Int) = Box((r[0] * w).toInt(), (r[1] * h).toInt(), (r[2] * w).toInt(), (r[3] * h).toInt())
-
     /**
-     * Words to look for: a list, or `{"text": [...], "region": [...]}` to OCR only that part of
-     * the screen (a whole-screen OCR takes ~3 s on the phone; the tree is still searched whole).
+     * The part of the screen to OCR (null: all of it; a whole-screen OCR takes 3–5 s on the phone):
+     * - `"region": [left, top, right, bottom]`, fractions of the screen;
+     * - `"near": f`, a full-width band reaching f of the screen height above and below what the run
+     *   last acted on ([Frame.focus]), e.g. the menu a long-press opens beside a message. A find on
+     *   the frame an expectation just held on gets the same band, so it reuses that OCR.
+     * Checked when the pack loads (the dry run has no screenshot, so only the arguments are read).
      */
-    private fun texts(arg: JsonElement): Pair<List<String>, List<Double>?> =
-        if (arg is JsonObject) strings(arg.getValue("text")) to arg["region"]?.let(::region) else strings(arg) to null
+    private fun area(frame: Frame, spec: JsonObject): Box? {
+        val region = spec["region"]?.let(::region)
+        val near = spec["near"]?.jsonPrimitive?.double?.also { require(it > 0 && it <= 1) { "near is a fraction of the screen height, 0..1" } }
+        val shot = frame.screenshot ?: return null
+        val (w, h) = shot.width to shot.height
+        region?.let { r -> return Box((r[0] * w).toInt(), (r[1] * h).toInt(), (r[2] * w).toInt(), (r[3] * h).toInt()) }
+        val focus = frame.focus ?: return null
+        return near?.let { Box(0, maxOf(0, focus.top - (it * h).toInt()), w, minOf(h, focus.bottom + (it * h).toInt())) }
+    }
 
-    private fun onScreen(frame: Frame, text: String, region: List<Double>? = null): Boolean =
+    /** Words to look for: a list, or `{"text": [...]}` with `region` or `near` (see [area]) to OCR only part of the screen. */
+    private fun texts(arg: JsonElement): Pair<List<String>, JsonObject?> =
+        if (arg is JsonObject) strings(arg.getValue("text")) to arg else strings(arg) to null
+
+    // The tree is still searched whole: it is cheap.
+    private fun onScreen(frame: Frame, text: String, where: JsonObject? = null): Boolean =
         frame.nodes().any { node -> listOfNotNull(node.text, node.desc).any { text in it } } ||
-            frame.ocr(region?.let { r -> frame.screenshot?.let { pixelsOf(r, it.width, it.height) } ?: return false }).any { text in it.text }
+            frame.ocr(where?.let { area(frame, it) }).any { text in it.text }
 }

@@ -60,6 +60,9 @@ class Runner(
     /** The last frame a find or check looked at. */
     private var lastSeen: Frame? = null
 
+    /** Where the last action landed: frames carry it as [Frame.focus]. */
+    private var acted: Box? = null
+
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
         for ((index, step) in pack.steps.withIndex()) {
@@ -74,7 +77,7 @@ class Runner(
                 traces += trace
                 observer.onStep(trace)
                 observer.onStuck(reason(index, step, trace.outcome))
-                val blocked = device.capture().freeze()
+                val blocked = capture().freeze()
                 if (waitFor(USER_WAIT_MS) { frame -> frame.takeIf { !it.sameScreen(blocked) } } == null) {
                     return RunResult(pack.id, traces, reason(index, step, trace.outcome))
                 }
@@ -115,7 +118,7 @@ class Runner(
                 }
                 findMs += device.nowMs() - start
                 if (hit == null) {
-                    return trace(if (device.capture().packageName in requires) Outcome.MISSING else Outcome.WRONG_APP)
+                    return trace(if (capture().packageName in requires) Outcome.MISSING else Outcome.WRONG_APP)
                 }
             }
 
@@ -123,6 +126,7 @@ class Runner(
             settled = null
             var start = device.nowMs()
             val done = action.perform(device, step, hit?.value)
+            if (done) acted = hit?.value?.bounds ?: acted
             actMs += device.nowMs() - start
             // A target that moved or vanished before the action lands (e.g. a new chat message): find it again.
             if (!done && action.needsTarget && attempts <= step.maxRetry) continue
@@ -155,7 +159,7 @@ class Runner(
             // same screen" is the previous step's expectation when it has one (the target itself may have
             // moved, e.g. a new message pushed the last bubble up); otherwise the same place and label,
             // since a positional finder (listItem) also hits on a different screen.
-            val frame = device.capture()
+            val frame = capture()
             val again = if (action.needsTarget) findTarget(step, frame)?.value else null
             val before = hit?.value
             val sameScreen = screen?.let { registry.holds(frame, it) }
@@ -172,10 +176,10 @@ class Runner(
     private fun backToStart(expect: JsonObject, requires: List<String>, timeoutMs: Long): Boolean {
         repeat(MAX_BACKS) {
             // The comparison below needs the screen as it was before the press.
-            val before = device.capture().freeze()
+            val before = capture().freeze()
             if (before.packageName !in requires || !device.back()) return false
             device.awaitSettle(timeoutMs)
-            val after = device.capture()
+            val after = capture()
             if (registry.holds(after, expect)) return true
             if (after.sameScreen(before)) return false
         }
@@ -188,7 +192,7 @@ class Runner(
         var frame = first
         var seen: Frame? = null
         while (true) {
-            val now = frame ?: device.capture()
+            val now = frame ?: capture()
             frame = null
             // The same screen gives the same answer: skip it rather than run OCR again (~3 s).
             val unchanged = seen != null && now.packageName == seen.packageName && now.toasts == seen.toasts && now.sameScreen(seen)
@@ -202,6 +206,8 @@ class Runner(
             device.awaitSettle(left)
         }
     }
+
+    private fun capture() = device.capture().also { it.focus = acted }
 
     /** Whether every finder of the step reads the screenshot (OCR, layout) rather than the tree. */
     private fun readsScreenshot(step: Step) =

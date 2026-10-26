@@ -63,6 +63,9 @@ class Frame(
     private val recognizer: TextRecognizer? = null,
     shooter: (() -> Pixels?)? = null,
 ) {
+    /** What the run last acted on (set by the runner), for OCR areas placed around it. */
+    var focus: Box? = null
+
     /** Tells rounds apart (traces, caches); grows with every capture. */
     val id: Long = ids.incrementAndGet()
 

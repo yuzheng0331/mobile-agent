@@ -482,4 +482,29 @@ class CoreTest {
         assertEquals(1, shots)
         assertEquals(0L, result.steps.last().findMs)
     }
+
+    @Test
+    fun `near reads a band around the last action, and the next find reuses that OCR`() {
+        val asked = mutableListOf<Box?>()
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = listOf(TextHit("多选", Box(0, 1700, 100, 1740), 0.9f)).also { asked += region }
+            override fun readLine(pixels: Pixels, region: Box) = null
+        }
+        val chat = Frame("com.tencent.mm", UiNode(children = listOf(UiNode(text = "x", longClickable = true, bounds = Box(170, 2000, 400, 2100)))), recognizer = reader, shooter = { Pixels(1000, 2000, IntArray(0)) })
+        val device = object : Device {
+            var now = 0L
+            override fun capture(displayId: Int) = chat
+            override fun launch(packageName: String) = true
+            override fun press(target: Target, long: Boolean) = true
+            override fun back() = true
+            override fun nowMs() = now
+            override fun awaitSettle(timeoutMs: Long) = true.also { now += minOf(300, timeoutMs) }
+        }
+        val result = Runner(device).run(Packs.parse("""{"schemaVersion":1,"id":"t","requires":["com.tencent.mm"],"needs":["ocr"],"steps":[
+            {"do":"long","target":{"intent":"m","find":[{"text":"x"}]},"expect":{"anyText":{"text":["多选"],"near":0.2}}},
+            {"do":"tap","target":{"intent":"复制","find":[{"ocrText":"复制","near":0.2}]},"ifMissing":"不是文字"}]}"""))
+        assertEquals(Outcome.MISSING, result.steps.last().outcome)
+        assertEquals(listOf<Box?>(Box(0, 1600, 1000, 2000)), asked) // 400 px above, clipped below; read once
+        assertEquals(1, validate(pack("""[{"do":"back","expect":{"anyText":{"text":["x"],"near":2}}}]""", needs = """["ocr"]""")).size)
+    }
 }

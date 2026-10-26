@@ -46,7 +46,11 @@ class AgentService : AccessibilityService(), Device {
         PpOcr(bytes("det.onnx"), bytes("rec.onnx"), assets.open("ocr/dict.txt").bufferedReader().readLines())
     }
     private val ocrReader = object : TextRecognizer {
-        override fun recognize(pixels: Pixels, region: Box?) = ocr.recognize(pixels, region)
+        // Sizes, counts and times only, never the text.
+        override fun recognize(pixels: Pixels, region: Box?) = ocr.recognize(pixels, region).also {
+            val area = region?.let { r -> "${r.right - r.left}x${r.bottom - r.top}" } ?: "整屏"
+            Log.i("PhoneAgent", "OCR $area：${it.size} 框（${ocr.timings}）")
+        }
         override fun readLine(pixels: Pixels, region: Box) = ocr.readLine(pixels, region)
     }
     @Volatile private var recognizer: TextRecognizer? = null
@@ -57,7 +61,9 @@ class AgentService : AccessibilityService(), Device {
      */
     fun useOcr(on: Boolean) {
         recognizer = if (on) ocrReader else null
-        if (on) Thread { resources.displayMetrics.let { ocr.warmUp(it.widthPixels, it.heightPixels) } }.start()
+        // The full display, as screenshots are (displayMetrics leaves out the navigation bar): a warm-up at
+        // another size would leave the first whole-screen OCR to set up its own.
+        if (on) Thread { getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds.let { ocr.warmUp(it.width(), it.height()) } }.start()
     }
     private val toasts = ArrayDeque<Pair<Long, String>>()
 

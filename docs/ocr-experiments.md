@@ -375,7 +375,7 @@ XNNPACK 在升级 onnxruntime 后可以重测，桌面版和安卓版要一起�
   export OCR_LABELS="$(cygpath -aw tools/probe/out/ocr_labels_tree.json);$(cygpath -aw tools/probe/out/ocr_labels_wechat.json)"
   ./gradlew :core:test --tests '*OcrTest*grid*' --rerun -i
   ```
-  - 只跑部分组合：设 `OCR_GRID`，例如 `boxThresh=0.6,side=1280;batch=1`。可用的键：`boxThresh`、`unclip`、`side`、`batch`、`widths`（如 `320/1280`）。
+  - 只跑部分组合：设 `OCR_GRID`，例如 `boxThresh=0.6,side=1280;batch=1`。可用的键：`boxThresh`、`unclip`、`side`、`batch`、`widths`（如 `320/1280`）、`canvas`（如 `1024x2240`）。
   - 设 `OCR_MISSES=$(cygpath -aw tools/probe/out/ocr_misses.html)`：把第一组配置的逐条错误写成本地网页，带截图裁剪。
   - 要加 `--rerun`，因为 Gradle 不跟踪环境变量。32 组约 13 分钟。
 - **手机**：

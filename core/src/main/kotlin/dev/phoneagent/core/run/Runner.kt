@@ -51,6 +51,11 @@ class Runner(
     private val registry: Registry = Builtins.registry,
     private val observer: RunObserver = RunObserver {},
 ) {
+    /**
+     * The frame the last expectation held on. Nothing has acted since, so the next step's first
+     * find looks at it instead of capturing again: with OCR that saves a whole recognition (~3 s).
+     */
+    private var settled: Frame? = null
 
     fun run(pack: Pack): RunResult {
         val traces = mutableListOf<StepTrace>()
@@ -93,7 +98,8 @@ class Runner(
             if (action.needsTarget) {
                 val start = device.nowMs()
                 // Only ever touch the apps the pack declares; another app in front is waited out, then refused.
-                hit = waitFor(step.timeoutMs) { frame -> if (frame.packageName in requires) findTarget(step, frame) else null }
+                hit = waitFor(step.timeoutMs, settled) { frame -> if (frame.packageName in requires) findTarget(step, frame) else null }
+                settled = null
                 findMs += device.nowMs() - start
                 if (hit == null) {
                     return trace(if (device.capture().packageName in requires) Outcome.MISSING else Outcome.WRONG_APP)
@@ -101,6 +107,7 @@ class Runner(
             }
 
             attempts++
+            settled = null
             var start = device.nowMs()
             val done = action.perform(device, step, hit?.value)
             actMs += device.nowMs() - start
@@ -119,9 +126,9 @@ class Runner(
             // shortcut: 1.5 s may be too short for a slow cold start, raise it if launch backs out of a splash.
             val checkFor = if (step.action == "launch") minOf(step.timeoutMs, LAUNCH_CHECK_MS) else step.timeoutMs
             start = device.nowMs()
-            val met = waitFor(checkFor) { frame -> registry.holds(frame, expect).takeIf { it } } != null
+            settled = waitFor(checkFor) { frame -> frame.takeIf { registry.holds(it, expect) } }
             checkMs += device.nowMs() - start
-            if (met) return trace(Outcome.SUCCESS)
+            if (settled != null) return trace(Outcome.SUCCESS)
 
             // A launch can resume the app mid-flow (e.g. inside a chat): press back toward its start screen.
             if (step.action == "launch") {
@@ -162,11 +169,13 @@ class Runner(
         return false
     }
 
-    /** Re-perceives after each settle until [probe] answers or [timeoutMs] passes. */
-    private fun <T : Any> waitFor(timeoutMs: Long, probe: (Frame) -> T?): T? {
+    /** Re-perceives after each settle until [probe] answers or [timeoutMs] passes; [first] is tried before capturing. */
+    private fun <T : Any> waitFor(timeoutMs: Long, first: Frame? = null, probe: (Frame) -> T?): T? {
         val deadline = device.nowMs() + timeoutMs
+        var frame = first
         while (true) {
-            probe(device.capture())?.let { return it }
+            probe(frame ?: device.capture())?.let { return it }
+            frame = null
             val left = deadline - device.nowMs()
             if (left <= 0) return null
             device.awaitSettle(left)

@@ -33,7 +33,8 @@ private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: 
     private var now = 0L
     val actions = mutableListOf<String>()
 
-    override fun capture(displayId: Int) = frames[current]
+    var captures = 0
+    override fun capture(displayId: Int) = frames[current].also { captures++ }
     override fun launch(packageName: String) = act("launch $packageName")
     var pressFailures = 0
     override fun press(target: Target, long: Boolean): Boolean {
@@ -427,5 +428,17 @@ class CoreTest {
         assertTrue(frame(false).sameScreen(frame(false)))
         assertTrue(!frame(false).sameScreen(frame(true)))
         assertTrue(frame(false, ocr = false).sameScreen(frame(true, ocr = false))) // without OCR the tree decides
+    }
+
+    @Test
+    fun `the step after a met expectation finds on that same frame, without capturing again`() {
+        val device = FakeDevice(qqChat, qqMenu)
+        val at = mutableListOf<Int>()
+        val result = Runner(device, observer = { at += device.captures }).run(
+            pack("""[{"do":"long","target":{"intent":"m","find":[{"lastMessage":true}]},"expect":{"anyText":["复制"]}},
+                     {"do":"tap","target":{"intent":"复制","find":[{"text":"复制"}]}}]"""),
+        )
+        assertTrue(result.ok, result.reason)
+        assertEquals(at[0], at[1])
     }
 }

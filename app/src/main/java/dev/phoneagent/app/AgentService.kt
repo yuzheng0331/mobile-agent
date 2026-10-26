@@ -227,7 +227,17 @@ class AgentService : AccessibilityService(), Device {
         val path = Path().apply { moveTo(target.bounds.centerX.toFloat(), target.bounds.centerY.toFloat()) }
         val stroke = GestureDescription.StrokeDescription(path, 0, if (long) LONG_PRESS_MS else TAP_MS)
         val gesture = GestureDescription.Builder().addStroke(stroke).setDisplayId(lastDisplayId).build()
-        return dispatchGesture(gesture, null, null)
+        // Wait until the press is over: dispatchGesture returns at once, and the settle that follows
+        // would otherwise end mid-press, before the long-press menu exists (a wasted ~3 s OCR).
+        val done = CountDownLatch(1)
+        var completed = false
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription) { completed = true; done.countDown() }
+            override fun onCancelled(gestureDescription: GestureDescription) = done.countDown()
+        }
+        if (!dispatchGesture(gesture, callback, mainHandler)) return false
+        done.await(stroke.duration + GESTURE_GRACE_MS, TimeUnit.MILLISECONDS)
+        return completed
     }
 
     override fun back(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
@@ -278,6 +288,7 @@ class AgentService : AccessibilityService(), Device {
         private const val POLL_MS = 50L
         private const val TAP_MS = 50L
         private const val LONG_PRESS_MS = 800L
+        private const val GESTURE_GRACE_MS = 1_000L
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 8_000L

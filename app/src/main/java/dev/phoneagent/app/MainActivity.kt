@@ -22,7 +22,6 @@ import java.util.concurrent.Executors
 /** Bundled packs with a run button each, plus a link to the accessibility settings. */
 class MainActivity : Activity() {
 
-    private val worker = Executors.newSingleThreadExecutor()
     private lateinit var service: TextView
     private lateinit var status: TextView
 
@@ -59,11 +58,6 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         service.text = if (AgentService.instance != null) "无障碍服务：已开启" else "无障碍服务：未开启"
-    }
-
-    override fun onDestroy() {
-        worker.shutdownNow()
-        super.onDestroy()
     }
 
     private fun run(pack: Pack) {
@@ -106,6 +100,9 @@ class MainActivity : Activity() {
     }
 
     private companion object {
+        // The process's, not this activity's: the system destroys a background activity when memory
+        // runs low (it did mid-run on 2026-10-26), and the run must go on to its end and restore the keyboard.
+        val worker = Executors.newSingleThreadExecutor()
         const val TAG = "PhoneAgent"
         const val STOP_HINT_MS = 6_000L
     }

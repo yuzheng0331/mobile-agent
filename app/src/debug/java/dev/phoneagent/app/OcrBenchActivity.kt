@@ -29,7 +29,7 @@ import java.io.File
  * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
  * crashes takes the process with it, so run those alone.
  * `--es score 0,2240` instead scores against the labels at those detection sides: see [score];
- * `--es score gpu` scores the shipped GPU models (LiteRtModels) instead.
+ * `--es score gpu` scores the shipped models (LiteRtModels) instead, `--es score cpu` the same on LiteRT's CPU.
  * `--es litert CPU,GPU` instead runs the GPU experiment (`--es graphs det:1,rec:6` by default): see [LiteRtBench].
  */
 class OcrBenchActivity : Activity() {
@@ -144,7 +144,7 @@ class OcrBenchActivity : Activity() {
         val labels = File(dir, "labels.json").takeIf { it.isFile }?.let { parseLabels(it.readText()) } ?: return log("判分：没有标注")
         fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
         val dict = assets.open("ocr/dict.txt").bufferedReader().readLines()
-        for (side in sides) (if (side == "gpu") PpOcr(LiteRtModels(this), dict, LiteRtModels.CONFIG)
+        for (side in sides) (if (side == "gpu" || side == "cpu") PpOcr(LiteRtModels(this, gpu = side == "gpu"), dict, LiteRtModels.CONFIG)
         else PpOcr(bytes("det.onnx"), bytes("rec.onnx"), dict, OcrConfig(detMaxSide = side.toInt().takeIf { it > 0 }))).use { ocr ->
             val score = OcrScore()
             labels.forEachIndexed { index, shot ->

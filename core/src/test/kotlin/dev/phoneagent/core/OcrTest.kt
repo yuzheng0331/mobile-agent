@@ -34,10 +34,12 @@ import kotlin.test.assertTrue
 
 /** Fetched by :app:fetchOcrModels; the model tests are skipped until then. */
 private val MODELS = File("../app/src/main/assets/ocr")
+// The app recognizes with the LiteRT conversions; the ONNX original is only in the debug build.
+private val REC = File("../app/src/debug/assets/ocr/rec.onnx")
 
 private fun loadOcr(): PpOcr {
-    assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched; run ./gradlew :app:fetchOcrModels")
-    return PpOcr(File(MODELS, "det.onnx").readBytes(), File(MODELS, "rec.onnx").readBytes(), File(MODELS, "dict.txt").readLines())
+    assumeTrue(REC.isFile, "OCR models not fetched; run ./gradlew :app:fetchOcrModels")
+    return PpOcr(File(MODELS, "det.onnx").readBytes(), REC.readBytes(), File(MODELS, "dict.txt").readLines())
 }
 
 private fun pixels(image: BufferedImage) =
@@ -203,7 +205,7 @@ class OcrTest {
     fun `accuracy grid on labelled screenshots`() {
         val files = System.getenv("OCR_LABELS")?.split(File.pathSeparator)?.map(::File)?.filter { it.isFile }.orEmpty()
         assumeTrue(files.isNotEmpty(), "set OCR_LABELS to the label files")
-        assumeTrue(File(MODELS, "rec.onnx").isFile, "OCR models not fetched")
+        assumeTrue(REC.isFile, "OCR models not fetched")
         val shots = files.flatMap { parseLabels(it.readText()) }
         val images = shots.map { pixels(ImageIO.read(File(it.file))) }
         val grid = System.getenv("OCR_GRID")?.let { spec -> spec.split(";").map { configOf(it) } } ?: listOf(0.45, 0.6).flatMap { thresh ->
@@ -214,7 +216,7 @@ class OcrTest {
             }
         }
         val det = File(MODELS, "det.onnx").readBytes()
-        val rec = File(MODELS, "rec.onnx").readBytes()
+        val rec = REC.readBytes()
         val dict = File(MODELS, "dict.txt").readLines()
         println("OCR 网格：${shots.size} 张，标注 ${shots.sumOf { it.labels.size }}，其中 ≤${OcrScore.SHORT} 字 ${shots.sumOf { s -> s.labels.count { it.text.length <= OcrScore.SHORT } }}，不该出现 ${shots.sumOf { it.absent.size }}")
         for (config in grid) {

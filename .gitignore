@@ -11,5 +11,6 @@ PROJECT_STATE.md
 .venv/
 # OCR models are fetched by :app:fetchOcrModels (pinned, SHA-256 checked)
 app/src/main/assets/ocr/*.onnx
+app/src/debug/assets/ocr/*.onnx
 # made from them by tools/probe/ocr_litert_assets.sh
 app/src/main/assets/ocr/litert/

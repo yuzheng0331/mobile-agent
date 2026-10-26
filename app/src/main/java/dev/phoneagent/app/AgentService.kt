@@ -43,18 +43,13 @@ class AgentService : AccessibilityService(), Device {
     @Volatile private var lastChangeAt = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // OCR: loaded once per process, only by runs whose pack needs it. On the GPU when the converted
-    // models are bundled and the GPU takes them (3–5x faster, same readings), else on the CPU.
+    // OCR: loaded once per process, only by runs whose pack needs it. Recognition on the GPU (about
+    // 3x faster, same readings), or LiteRT's CPU when the GPU refuses it; detection on the CPU.
     private val ocr by lazy {
-        val dictionary = assets.open("ocr/dict.txt").bufferedReader().readLines()
         val start = SystemClock.uptimeMillis()
-        runCatching { PpOcr(LiteRtModels(this), dictionary, LiteRtModels.CONFIG) }
-            .onSuccess { Log.i("PhoneAgent", "OCR 用 GPU，加载 ${SystemClock.uptimeMillis() - start} ms") }
-            .getOrElse { e ->
-                Log.w("PhoneAgent", "OCR 用不了 GPU，改用 CPU：${e.javaClass.simpleName} ${e.message}")
-                fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
-                PpOcr(bytes("det.onnx"), bytes("rec.onnx"), dictionary)
-            }
+        val models = LiteRtModels(this)
+        Log.i("PhoneAgent", "OCR 识别用 ${models.accelerator}，加载 ${SystemClock.uptimeMillis() - start} ms")
+        PpOcr(models, assets.open("ocr/dict.txt").bufferedReader().readLines(), LiteRtModels.CONFIG)
     }
     private val ocrReader = object : TextRecognizer {
         // Sizes, counts and times only, never the text.

@@ -38,8 +38,8 @@ dependencies {
     implementation(project(":core"))
     // Same version as core's compileOnly desktop runtime: core's OCR code is built against that API.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
-    // OCR on the GPU (LiteRtModels); onnxruntime above stays as the fallback. Without Play's AI-pack
-    // delivery (WorkManager, boot receivers): the models are plain assets.
+    // OCR recognition (LiteRtModels, GPU or CPU); onnxruntime above runs detection. Without Play's
+    // AI-pack delivery (WorkManager, boot receivers): the models are plain assets.
     implementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
     implementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
 }
@@ -51,14 +51,17 @@ val ocrModels = mapOf(
     "rec.onnx" to Triple("PP-OCRv6_small_rec_onnx", "b8f84f0b80c529de40b4fbb3544b84fa7233a513", "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"),
 )
 
+// The app recognizes with LiteRT conversions of rec.onnx (tools/probe/ocr_litert_assets.sh), so the
+// original only ships in the debug build, for the test page; core's tests read it from there too.
+fun ocrModelFile(name: String) = layout.projectDirectory.file("src/${if (name == "rec.onnx") "debug" else "main"}/assets/ocr/$name").asFile
+
 val fetchOcrModels by tasks.registering {
-    val dir = layout.projectDirectory.dir("src/main/assets/ocr").asFile
-    outputs.files(ocrModels.keys.map { File(dir, it) })
+    outputs.files(ocrModels.keys.map(::ocrModelFile))
     doLast {
         fun sha256(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
         ocrModels.forEach { (name, model) ->
             val (repo, revision, hash) = model
-            val file = File(dir, name)
+            val file = ocrModelFile(name)
             if (file.isFile && sha256(file) == hash) return@forEach
             URI("https://huggingface.co/PaddlePaddle/$repo/resolve/$revision/inference.onnx").toURL()
                 .openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
@@ -70,3 +73,13 @@ val fetchOcrModels by tasks.registering {
     }
 }
 tasks.named("preBuild") { dependsOn(fetchOcrModels) }
+
+// Not in git and not made by Gradle (it needs Python with onnx2tf): without them OCR cannot run.
+val checkLiteRtModels by tasks.registering {
+    val dir = layout.projectDirectory.dir("src/main/assets/ocr/litert").asFile
+    doLast {
+        val missing = listOf(320, 640, 960, 1280).map { "rec$it.tflite" }.filterNot { File(dir, it).isFile }
+        if (missing.isNotEmpty()) throw GradleException("Missing $missing in $dir: run tools/probe/ocr_litert_assets.sh (see app/CLAUDE.md)")
+    }
+}
+tasks.named("preBuild") { dependsOn(checkLiteRtModels) }

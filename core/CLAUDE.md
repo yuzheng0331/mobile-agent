@@ -20,7 +20,7 @@
 
 ## 测试
 
-- OCR：编译只依赖 onnxruntime 桌面版（`compileOnly`），`app` 打包安卓版，两者版本必须一致。模型由 `./gradlew :app:fetchOcrModels` 下载到 `app/src/main/assets/ocr/`，没下载时模型测试自动跳过。改了 OCR 先跑对照测试：`tools/probe/ocr_reference.py` 生成参考（含真实文字，放仓库外），再 `OCR_REFERENCE=<json> ./gradlew :core:test`。调 `OcrConfig` 的准确率旋钮用标注网格：`OCR_LABELS=<标注文件;...>`（可加 `OCR_GRID`）跑 `--tests '*grid*' --rerun`，Gradle 不跟踪环境变量，所以要 `--rerun`。数据和命令见 `docs/ocr-experiments.md`，新结果也记在那里。
+- OCR：编译只依赖 onnxruntime 桌面版（`compileOnly`），`app` 打包安卓版，两者版本必须一致。模型由 `./gradlew :app:fetchOcrModels` 下载（检测在 `app/src/main/assets/ocr/`，识别在 `app/src/debug/assets/ocr/`），没下载时模型测试自动跳过。改了 OCR 先跑对照测试：`tools/probe/ocr_reference.py` 生成参考（含真实文字，放仓库外），再 `OCR_REFERENCE=<json> ./gradlew :core:test`。调 `OcrConfig` 的准确率旋钮用标注网格：`OCR_LABELS=<标注文件;...>`（可加 `OCR_GRID`）跑 `--tests '*grid*' --rerun`，Gradle 不跟踪环境变量，所以要 `--rerun`。数据和命令见 `docs/ocr-experiments.md`，新结果也记在那里。
 
 - `CoreTest.kt` 里的 `FakeDevice` 按“动作 → 下一帧”的脚本返回画面，`awaitSettle` 每次推进 300 ms 假时钟。
 - 会进入等待的步骤要有多帧用例；每个失败分支（`Outcome`）都要有用例。

@@ -14,7 +14,8 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 
 ## OCR 模型
 
-- `assets/ocr/` 的 ONNX 由 `:app:fetchOcrModels` 下载；识别在 GPU 上用的 `assets/ocr/litert/*.tflite` 由 `tools/probe/ocr_litert_assets.sh <Python 3.12，装 onnx2tf[tensorflow]==2.6.9>` 生成，都不进 git。没有 tflite 时 App 照常用 CPU 跑 OCR，日志里有“OCR 用不了 GPU”。
+- ONNX 由 `:app:fetchOcrModels` 下载：检测的放 `src/main/assets/ocr/`，识别的只放 `src/debug/assets/ocr/`（测速页和 core 的测试用）。识别用的 `src/main/assets/ocr/litert/*.tflite` 由 `tools/probe/ocr_litert_assets.sh <Python 3.12，装 onnx2tf[tensorflow]==2.6.9>` 生成。都不进 git；tflite 缺了构建会失败（`checkLiteRtModels`）。
+- 日志“OCR 识别用 GPU / CPU”：GPU 不接时自动用 LiteRT 的 CPU。
 - 改了 `LiteRtModels.CONFIG` 的尺寸，要同时改生成脚本里的尺寸。
 
 ## 输入法

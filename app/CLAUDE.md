@@ -12,6 +12,10 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 - 无障碍事件在主线程到达；`Device` 的调用会阻塞（`awaitSettle` 轮询），只能在工作线程调（`MainActivity` 的单线程 executor）。
 - `capture()` 把 `UiNode` 和真实的 `AccessibilityNodeInfo` 对应起来，`press()` 只对最近一次 capture 的节点有效。
 
+## 输入法
+
+- `AgentIme` 没有键盘、不读不打字，只为让进程按前台调度（vivo 后台只给 0–5 号核）。只在需要 OCR 的任务运行期间选中，结束切回原键盘（`AgentService.useFastCores`）；改动时保证任何退出路径都会切回。
+
 ## 不能动的
 
 - manifest 不加 `INTERNET` 权限。

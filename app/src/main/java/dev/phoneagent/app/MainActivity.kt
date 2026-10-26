@@ -39,6 +39,11 @@ class MainActivity : Activity() {
                 text = "打开无障碍设置"
                 setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             })
+            // Optional: OCR tasks run ~30% faster with our (keyboard-less) input method enabled.
+            addView(Button(context).apply {
+                text = "启用加速（在输入法列表里打开 Phone Agent 加速）"
+                setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+            })
         }
         loadPacks().forEach { (name, pack, problems) ->
             column.addView(Button(this).apply {
@@ -64,22 +69,30 @@ class MainActivity : Activity() {
     private fun run(pack: Pack) {
         val device = AgentService.instance ?: return run { status.text = "请先开启无障碍服务" }
         status.text = "运行中：${pack.id}"
-        device.useOcr("ocr" in pack.needs)
+        val ocr = "ocr" in pack.needs
+        device.useOcr(ocr)
         worker.execute {
             val lines = mutableListOf<String>()
-            val result = Runner(device, observer = object : RunObserver {
-                override fun onStep(trace: StepTrace) {
-                    device.hideHint()
-                    val line = timing(trace)
-                    Log.i(TAG, "${pack.id} $line")
-                    runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
-                }
+            val fast = ocr && device.useFastCores(true)
+            if (ocr && !fast) lines += "未启用加速：OCR 只能用部分 CPU 核，会慢约 30%"
+            val result = try {
+                Runner(device, observer = object : RunObserver {
+                    override fun onStep(trace: StepTrace) {
+                        device.hideHint()
+                        val line = timing(trace)
+                        Log.i(TAG, "${pack.id} $line")
+                        runOnUiThread { lines += line; status.text = "运行中：${pack.id}\n" + lines.joinToString("\n") }
+                    }
 
-                // The service's overlay strip: vivo drops toasts while this activity is in the background.
-                override fun onStuck(reason: String) {
-                    device.showHint("Phone Agent：$reason\n如果有弹窗，请手动关掉，关掉后会自动重试（最多等 20 秒）")
-                }
-            }).run(pack)
+                    // The service's overlay strip: vivo drops toasts while this activity is in the background.
+                    override fun onStuck(reason: String) {
+                        device.showHint("Phone Agent：$reason\n如果有弹窗，请手动关掉，关掉后会自动重试（最多等 20 秒）")
+                    }
+                }).run(pack)
+            } finally {
+                // Back to the user's keyboard whatever happened (a crash is covered on the next service start).
+                if (fast) device.useFastCores(false)
+            }
             Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
             device.hideHint()
             // The target app hides this screen, so say why it stopped over it, on the service's overlay

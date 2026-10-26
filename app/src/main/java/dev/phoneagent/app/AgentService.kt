@@ -1,6 +1,9 @@
 package dev.phoneagent.app
 
 import android.accessibilityservice.AccessibilityService
+import android.view.inputmethod.InputMethodManager
+import android.provider.Settings
+import android.content.ComponentName
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Bitmap
@@ -73,7 +76,34 @@ class AgentService : AccessibilityService(), Device {
 
     override fun onServiceConnected() {
         instance = this
+        // A run cut short (crash, killed) may have left our input method selected: give the keyboard back.
+        useFastCores(false)
     }
+
+    /**
+     * On: selects [AgentIme] so this process gets all cores while the target app is in front,
+     * remembering the user's keyboard first (persisted, so a crash can still restore it). Off:
+     * switches back to that keyboard. False when it couldn't, e.g. the user hasn't enabled
+     * our input method in the system settings; the run then goes on, only slower.
+     */
+    fun useFastCores(on: Boolean): Boolean {
+        val saved = getSharedPreferences(KEYBOARD_PREFS, MODE_PRIVATE)
+        val ours = ComponentName(this, AgentIme::class.java).flattenToShortString()
+        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        if (!on) {
+            val previous = saved.getString(PREVIOUS_KEYBOARD, null) ?: return true
+            if (current == ours && !softKeyboardController.switchToInputMethod(previous)) return false
+            saved.edit().remove(PREVIOUS_KEYBOARD).apply()
+            return true
+        }
+        if (current == ours) return true
+        if (!isEnabledInputMethod(ours)) return false
+        saved.edit().putString(PREVIOUS_KEYBOARD, current).commit()
+        return softKeyboardController.switchToInputMethod(ours)
+    }
+
+    private fun isEnabledInputMethod(id: String) =
+        getSystemService(InputMethodManager::class.java).enabledInputMethodList.any { it.id == id }
 
     override fun onDestroy() {
         instance = null
@@ -298,6 +328,8 @@ class AgentService : AccessibilityService(), Device {
         private const val MAX_ANCESTORS = 8
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 8_000L
+        private const val KEYBOARD_PREFS = "keyboard"
+        private const val PREVIOUS_KEYBOARD = "previous"
         private const val SCREENSHOT_TIMEOUT_MS = 3_000L
         private const val SCREENSHOT_RETRY_MS = 1_000L
         private const val SCREENSHOT_POLL_MS = 50L

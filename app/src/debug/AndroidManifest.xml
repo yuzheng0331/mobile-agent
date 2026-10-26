@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Debug-only entry points; not in release builds. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The cores experiment (OcrBenchActivity): a foreground service and an input method, debug only. -->
+    <!-- The cores experiment (OcrBenchActivity): a foreground service, debug only. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
@@ -17,19 +17,6 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Debug benchmark of on-device OCR" />
-        </service>
-
-        <service
-            android:name=".BenchIme"
-            android:exported="true"
-            android:label="Phone Agent 测速"
-            android:permission="android.permission.BIND_INPUT_METHOD">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-            <meta-data
-                android:name="android.view.im"
-                android:resource="@xml/bench_ime" />
         </service>
     </application>
 </manifest>

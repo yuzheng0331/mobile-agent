@@ -36,5 +36,19 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/agent_service" />
         </service>
+
+        <!-- No keyboard, never types: selected during OCR runs only, for all CPU cores (AgentIme). -->
+        <service
+            android:name=".AgentIme"
+            android:exported="true"
+            android:label="@string/ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/agent_ime" />
+        </service>
     </application>
 </manifest>

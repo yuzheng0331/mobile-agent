@@ -1,5 +1,6 @@
 """Fixed-shape ONNX for LiteRT's GPU: input shape fixed, simplified, and two rewrites the GPU
-delegate needs (results unchanged): HardSigmoid as RELU6, attention's 5-D qkv split in 4-D.
+delegate needs (results unchanged): HardSigmoid as RELU6, attention's 5-D qkv split in 4-D,
+and 3-D transposes after a 4-D -> 3-D reshape done in 4-D.
 
     python -I ocr_tflite.py <in.onnx> <out.onnx> <n,c,h,w>
     onnx2tf -i <out.onnx> -o <dir> -n     # then <dir>/<name>_float32.tflite
@@ -65,6 +66,36 @@ for r in nodes:
     drop |= {id(r), id(t)}
     after[id(r)] = new
 nodes = [x for n in nodes for x in ([] if id(n) in drop else [n]) + after.get(id(n), [])]
+# 4-D -> 3-D layout chains (Reshape or Squeeze, then a 3-D Transpose), as on rec's way into and
+# out of its attention blocks: the GPU lost that 3-D transpose (its last MatMul saw 120 steps
+# instead of 40, all letters wrong). Rewritten as one 4-D Transpose then a Reshape, which the
+# GPU handles; each rewrite is checked on an arange before it is made.
+if '--keep-3d-transpose' not in sys.argv:
+    from itertools import permutations
+    from onnx import shape_inference
+    g = shape_inference.infer_shapes(helper.make_model(helper.make_graph(nodes, 'g', m.graph.input, m.graph.output, list(m.graph.initializer) + inits), opset_imports=m.opset_import))
+    shape = {v.name: [d.dim_value for d in v.type.tensor_type.shape.dim] for v in list(g.graph.value_info) + list(g.graph.input) + list(g.graph.output)}
+    users = {}
+    for n in nodes:
+        for x in n.input: users.setdefault(x, []).append(n)
+    out = []
+    for n in nodes:
+        nxt = users.get(n.output[0], [])
+        if (n.op_type in ('Reshape', 'Squeeze') and len(shape.get(n.input[0], [])) == 4 and len(shape.get(n.output[0], [])) == 3
+                and len(nxt) == 1 and nxt[0].op_type == 'Transpose'):
+            t = nxt[0]
+            frm, to = shape[n.input[0]], shape[t.output[0]]
+            a = np.arange(int(np.prod(frm))).reshape(frm)
+            want = a.reshape(shape[n.output[0]]).transpose(list(t.attribute[0].ints))
+            perm = next(p for p in permutations(range(4)) if (a.transpose(p).reshape(to) == want).all())
+            print("4-D transpose", frm, list(perm), "->", to)
+            tag = n.name + '_4d'
+            out += [helper.make_node('Transpose', [n.input[0]], [tag], name=tag, perm=list(perm)),
+                    helper.make_node('Reshape', [tag, const(list(to))], [t.output[0]], name=tag + '_r')]
+            t.op_type = 'Drop'
+            continue
+        if n.op_type != 'Drop': out.append(n)
+    nodes = [n for n in out if n.op_type != 'Drop']
 del m.graph.node[:]
 m.graph.node.extend(nodes)
 m.graph.initializer.extend(inits)

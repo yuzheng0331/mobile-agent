@@ -29,7 +29,7 @@ import java.io.File
  * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
  * crashes takes the process with it, so run those alone.
  * `--es score 0,2240` instead scores against the labels at those detection sides: see [score].
- * `--es litert CPU,GPU` instead runs the GPU experiment: see [LiteRtBench].
+ * `--es litert CPU,GPU` instead runs the GPU experiment (`--es graphs det:1,rec:6` by default): see [LiteRtBench].
  */
 class OcrBenchActivity : Activity() {
 
@@ -70,7 +70,7 @@ class OcrBenchActivity : Activity() {
             runCatching {
                 when {
                     litert != null -> LiteRtBench(File(getExternalFilesDir(null), "ocr/litert"), { assets.open("ocr/$it").use { s -> s.readBytes() } }, ::log)
-                        .run(screen() ?: return@runCatching log("OCR：没有截图"), litert)
+                        .run(screen() ?: return@runCatching log("OCR：没有截图"), litert, list("graphs") ?: listOf("det:1", "rec:6"))
                     score != null -> score(score, ::log)
                     else -> ocrGrid(providers, sides, batches, threads, ::log)
                 }

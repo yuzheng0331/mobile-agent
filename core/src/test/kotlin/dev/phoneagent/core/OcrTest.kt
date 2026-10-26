@@ -241,6 +241,8 @@ class OcrTest {
             // side=0 is full size; no side key keeps the default.
             detMaxSide = if ("side" in v) v.getValue("side").toInt().takeIf { it > 0 } else OcrConfig().detMaxSide,
             recBatch = v["batch"]?.toInt() ?: OcrConfig().recBatch,
+            // widths=320/1280
+            recWidths = v["widths"]?.split("/")?.map { it.toInt() },
         )
     }
 

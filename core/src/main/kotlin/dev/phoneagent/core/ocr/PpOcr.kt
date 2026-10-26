@@ -32,6 +32,12 @@ data class OcrConfig(
     val detMaxSide: Int? = 2240,
     /** Lines per recognition run; lines in a run are padded to the widest. */
     val recBatch: Int = 6,
+    /**
+     * Fixed recognition widths, ascending, for runtimes that take fixed shapes: a run is padded to
+     * the first that fits, and lines wider than the last are squeezed to it. Null: no padding
+     * beyond the widest line.
+     */
+    val recWidths: List<Int>? = null,
     val detThreads: Int = 4,
     val recThreads: Int = 4,
     /** Where each graph runs (the two phases' times add up, so each can take its fastest). XNNPACK and NNAPI exist only in the Android build of onnxruntime. */
@@ -134,7 +140,8 @@ class PpOcr(
         val lines = arrayOfNulls<Pair<String, Float>>(crops.size)
         for (batch in crops.indices.sortedBy(ratio).chunked(config.recBatch)) {
             t = System.nanoTime()
-            val batchW = (REC_HEIGHT * max(REC_BASE_WIDTH.toDouble() / REC_HEIGHT, batch.maxOf(ratio))).toInt()
+            val fitW = (REC_HEIGHT * max(REC_BASE_WIDTH.toDouble() / REC_HEIGHT, batch.maxOf(ratio))).toInt()
+            val batchW = config.recWidths?.let { widths -> widths.firstOrNull { it >= fitW } ?: widths.last() } ?: fitW
             val plane = REC_HEIGHT * batchW
             // Zero padding to the right of narrower crops, as in PaddleOCR.
             val input = floatBuffer(batch.size * 3 * plane)

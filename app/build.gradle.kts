@@ -38,10 +38,10 @@ dependencies {
     implementation(project(":core"))
     // Same version as core's compileOnly desktop runtime: core's OCR code is built against that API.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
-    // The GPU experiment (docs/ocr-experiments.md): the test page only, not shipped.
-    // Without Play's AI-pack delivery (WorkManager, boot receivers): models are read from a file path.
-    debugImplementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
-    debugImplementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
+    // OCR on the GPU (LiteRtModels); onnxruntime above stays as the fallback. Without Play's AI-pack
+    // delivery (WorkManager, boot receivers): the models are plain assets.
+    implementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
+    implementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
 }
 
 // PP-OCRv6 small (Apache-2.0) from PaddlePaddle's Hugging Face repos, pinned to a revision and

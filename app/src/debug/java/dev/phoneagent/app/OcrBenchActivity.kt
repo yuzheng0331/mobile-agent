@@ -28,7 +28,8 @@ import java.io.File
  * Extras narrow the grid, e.g. `--es providers NNAPI+NNAPI,XNNPACK+CPU --es sides 0,1280
  * --es batches 6` (detection+recognition provider; side 0 = full size). A provider that
  * crashes takes the process with it, so run those alone.
- * `--es score 0,2240` instead scores against the labels at those detection sides: see [score].
+ * `--es score 0,2240` instead scores against the labels at those detection sides: see [score];
+ * `--es score gpu` scores the shipped GPU models (LiteRtModels) instead.
  * `--es litert CPU,GPU` instead runs the GPU experiment (`--es graphs det:1,rec:6` by default): see [LiteRtBench].
  */
 class OcrBenchActivity : Activity() {
@@ -63,7 +64,7 @@ class OcrBenchActivity : Activity() {
                 Log.i(TAG, line)
                 runOnUiThread { out.text = lines.joinToString("\n\n") }
             }
-            val score = list("score")?.map { it.toInt() }
+            val score = list("score")
             if (score == null && list("litert") == null && delay == 0L) log(screenshots())
             Thread.sleep(delay * 1000)
             val litert = list("litert")
@@ -138,12 +139,13 @@ class OcrBenchActivity : Activity() {
      * order) and the screenshots as `00.png`, `01.png`, … in that order, both pushed with adb and
      * deleted after. Scored as on the PC (OcrScore); only counts are logged, never the text.
      */
-    private fun score(sides: List<Int>, log: (String) -> Unit) {
+    private fun score(sides: List<String>, log: (String) -> Unit) {
         val dir = File(getExternalFilesDir(null), "ocr/labelled")
         val labels = File(dir, "labels.json").takeIf { it.isFile }?.let { parseLabels(it.readText()) } ?: return log("判分：没有标注")
         fun bytes(name: String) = assets.open("ocr/$name").use { it.readBytes() }
         val dict = assets.open("ocr/dict.txt").bufferedReader().readLines()
-        for (side in sides) PpOcr(bytes("det.onnx"), bytes("rec.onnx"), dict, OcrConfig(detMaxSide = side.takeIf { it > 0 })).use { ocr ->
+        for (side in sides) (if (side == "gpu") PpOcr(LiteRtModels(this), dict, LiteRtModels.CONFIG)
+        else PpOcr(bytes("det.onnx"), bytes("rec.onnx"), dict, OcrConfig(detMaxSide = side.toInt().takeIf { it > 0 }))).use { ocr ->
             val score = OcrScore()
             labels.forEachIndexed { index, shot ->
                 val bitmap = BitmapFactory.decodeFile(File(dir, "%02d.png".format(index)).path)
@@ -152,7 +154,7 @@ class OcrBenchActivity : Activity() {
                 })
                 score.add(index, shot, ocr.recognize(screen, null))
             }
-            log("判分（手机）检测边长 ${if (side == 0) "原图" else side}：${labels.size} 张，${score.summary()}")
+            log("判分（手机）检测边长 ${if (side == "0") "原图" else side}：${labels.size} 张，${score.summary()}")
             score.byLength().forEach { log("  $it") }
         }
     }

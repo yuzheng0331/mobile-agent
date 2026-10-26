@@ -12,6 +12,11 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 - 无障碍事件在主线程到达；`Device` 的调用会阻塞（`awaitSettle` 轮询），只能在工作线程调（`MainActivity` 的单线程 executor）。
 - `capture()` 把 `UiNode` 和真实的 `AccessibilityNodeInfo` 对应起来，`press()` 只对最近一次 capture 的节点有效。
 
+## OCR 模型
+
+- `assets/ocr/` 的 ONNX 由 `:app:fetchOcrModels` 下载；GPU 用的 `assets/ocr/litert/*.tflite` 由 `tools/probe/ocr_litert_assets.sh <Python 3.12，装 onnx2tf[tensorflow]==2.6.9>` 生成，都不进 git。没有 tflite 时 App 照常用 CPU 跑 OCR，日志里有“OCR 用不了 GPU”。
+- 改了 `LiteRtModels.CONFIG` 的尺寸，要同时改生成脚本里的尺寸。
+
 ## 输入法
 
 - `AgentIme` 没有键盘、不读不打字，只为让进程按前台调度（vivo 后台只给 0–5 号核）。只在需要 OCR 的任务运行期间选中，结束切回原键盘（`AgentService.useFastCores`）；改动时保证任何退出路径都会切回。

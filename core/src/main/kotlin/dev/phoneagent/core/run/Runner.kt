@@ -63,8 +63,8 @@ class Runner(
                 traces += trace
                 observer.onStep(trace)
                 observer.onStuck(reason(index, step, trace.outcome))
-                val blocked = device.capture().tree
-                if (waitFor(USER_WAIT_MS) { frame -> frame.tree.takeIf { it != blocked } } == null) {
+                val blocked = device.capture().freeze()
+                if (waitFor(USER_WAIT_MS) { frame -> frame.takeIf { !it.sameScreen(blocked) } } == null) {
                     return RunResult(pack.id, traces, reason(index, step, trace.outcome))
                 }
                 device.awaitSettle(step.timeoutMs)
@@ -151,12 +151,13 @@ class Runner(
      */
     private fun backToStart(expect: JsonObject, requires: List<String>, timeoutMs: Long): Boolean {
         repeat(MAX_BACKS) {
-            val before = device.capture()
+            // The comparison below needs the screen as it was before the press.
+            val before = device.capture().freeze()
             if (before.packageName !in requires || !device.back()) return false
             device.awaitSettle(timeoutMs)
             val after = device.capture()
             if (registry.holds(after, expect)) return true
-            if (after.tree == before.tree) return false
+            if (after.sameScreen(before)) return false
         }
         return false
     }

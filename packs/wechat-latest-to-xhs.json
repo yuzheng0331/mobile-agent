@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "wechat-latest-to-xhs",
+  "version": "0.1.0",
+  "author": "phone-agent",
+  "aliases": ["复制微信最新消息", "微信最新消息然后开小红书"],
+  "requires": ["com.tencent.mm", "com.xingin.xhs"],
+  "needs": ["ocr"],
+  "steps": [
+    {"do": "launch", "app": "com.tencent.mm",
+     "expect": {"anyText": {"text": ["通讯录"], "region": [0, 0.95, 1, 1]}}},
+    {"do": "tap",
+     "target": {"intent": "底部“微信”标签（微信可能停在通讯录、发现、我）",
+                "find": [{"ocrText": "微信", "exact": true, "region": [0, 0.95, 0.3, 1]}]},
+     "expect": {"anyText": {"text": ["微信"], "region": [0.2, 0.035, 0.8, 0.085]}},
+     "ifMissing": "没找到微信底部的“微信”标签"},
+    {"do": "tap",
+     "target": {"intent": "最上面的聊天（跳过公众号、服务号等）",
+                "find": [{"chatRow": true, "skip": ["公众号", "服务号", "订阅号消息", "腾讯新闻", "微信团队", "小程序客服消息", "文件传输助手", "微信支付", "微信运动", "QQ邮箱提醒"]}]},
+     "expect": {"gone": {"text": ["通讯录"], "region": [0, 0.95, 1, 1]}},
+     "ifMissing": "会话列表里没有聊天（只有公众号、服务号等）"},
+    {"do": "long",
+     "target": {"intent": "聊天区最下面一条消息", "find": [{"lastBubble": true}]},
+     "expect": {"anyText": ["多选"]},
+     "ifMissing": "聊天里没有消息"},
+    {"do": "tap",
+     "target": {"intent": "复制", "find": [{"ocrText": "复制", "exact": true}]},
+     "expect": {"toast": "已复制"},
+     "ifMissing": "最新消息不是文字（图片、语音或表情），不能复制"},
+    {"do": "launch", "app": "com.xingin.xhs"}
+  ]
+}

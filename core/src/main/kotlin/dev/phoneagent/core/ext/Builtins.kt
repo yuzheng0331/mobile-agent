@@ -24,14 +24,18 @@ object Builtins {
             "lastMessage" to Finder(::lastMessage),
             // The same for an empty tree, from the screenshot's layout (WeChat).
             "lastBubble" to Finder { frame, _, _ -> frame.screenshot?.let(::lastBubble)?.let { Target(it) } },
+            "chatRow" to object : Finder {
+                override val needs = setOf("ocr")
+                override fun find(frame: Frame, spec: JsonObject, registry: Registry) = chatRow(frame, spec)
+            },
             "ocrText" to object : Finder {
                 override val needs = setOf("ocr")
                 override fun find(frame: Frame, spec: JsonObject, registry: Registry) = ocrText(frame, spec)
             },
         ),
         expectations = mapOf(
-            "anyText" to Expectation { frame, arg -> strings(arg).any { onScreen(frame, it) } },
-            "gone" to Expectation { frame, arg -> strings(arg).none { onScreen(frame, it) } },
+            "anyText" to Expectation { frame, arg -> texts(arg).let { (words, region) -> words.any { onScreen(frame, it, region) } } },
+            "gone" to Expectation { frame, arg -> texts(arg).let { (words, region) -> words.none { onScreen(frame, it, region) } } },
             "toast" to Expectation { frame, arg ->
                 val want = arg.jsonPrimitive.content
                 frame.toasts.any { want in it }
@@ -47,6 +51,21 @@ object Builtins {
     )
 
     /**
+     * The first chat-list row (from the screenshot, for an empty tree) whose name, read by OCR
+     * beside the avatar, contains none of `skip`: entries that are not chats (official accounts,
+     * news, the team account) are passed over. The target is the whole row.
+     */
+    private fun chatRow(frame: Frame, spec: JsonObject): Target? {
+        val skip = spec["skip"]?.let(::strings).orEmpty().map { it.filterNot(Char::isWhitespace) }
+        val shot = frame.screenshot ?: return null
+        for ((avatar, name) in chatRows(shot)) {
+            val read = frame.ocrLine(name)?.text?.filterNot(Char::isWhitespace) ?: continue
+            if (skip.none { it in read }) return Target(Box(avatar.left, avatar.top, (0.95 * shot.width).toInt(), avatar.bottom))
+        }
+        return null
+    }
+
+    /**
      * Text read by OCR, for apps whose tree has no text (WeChat). `region` is
      * `[left, top, right, bottom]` as fractions of the screen, so packs work at any
      * resolution; only that part is detected and read. Matching is the same as `text`
@@ -55,12 +74,9 @@ object Builtins {
     private fun ocrText(frame: Frame, spec: JsonObject): Target? {
         val want = spec.getValue("ocrText").jsonPrimitive.content.filterNot(Char::isWhitespace)
         val exact = spec["exact"]?.jsonPrimitive?.boolean == true
-        val region = spec["region"]?.jsonArray?.map { it.jsonPrimitive.double }?.also { r ->
-            require(r.size == 4 && r.all { it in 0.0..1.0 } && r[0] < r[2] && r[1] < r[3]) { "region is [left, top, right, bottom], fractions 0..1" }
-        }
+        val region = spec["region"]?.let(::region)
         val shot = frame.screenshot ?: return null
-        val box = region?.let { (l, t, r, b) -> Box((l * shot.width).toInt(), (t * shot.height).toInt(), (r * shot.width).toInt(), (b * shot.height).toInt()) }
-        val hits = frame.ocr(box).map { it to it.text.filterNot(Char::isWhitespace) }
+        val hits = frame.ocr(region?.let { pixelsOf(it, shot.width, shot.height) }).map { it to it.text.filterNot(Char::isWhitespace) }
         val hit = hits.firstOrNull { it.second == want } ?: if (exact) null else hits.firstOrNull { want in it.second }
         return hit?.let { Target(it.first.bounds) }
     }
@@ -120,7 +136,21 @@ object Builtins {
 
     private fun strings(arg: JsonElement): List<String> = arg.jsonArray.map { it.jsonPrimitive.content }
 
-    private fun onScreen(frame: Frame, text: String): Boolean =
+    /** `[left, top, right, bottom]` as fractions of the screen, checked when the pack loads. */
+    private fun region(arg: JsonElement): List<Double> = arg.jsonArray.map { it.jsonPrimitive.double }.also { r ->
+        require(r.size == 4 && r.all { it in 0.0..1.0 } && r[0] < r[2] && r[1] < r[3]) { "region is [left, top, right, bottom], fractions 0..1" }
+    }
+
+    private fun pixelsOf(r: List<Double>, w: Int, h: Int) = Box((r[0] * w).toInt(), (r[1] * h).toInt(), (r[2] * w).toInt(), (r[3] * h).toInt())
+
+    /**
+     * Words to look for: a list, or `{"text": [...], "region": [...]}` to OCR only that part of
+     * the screen (a whole-screen OCR takes ~3 s on the phone; the tree is still searched whole).
+     */
+    private fun texts(arg: JsonElement): Pair<List<String>, List<Double>?> =
+        if (arg is JsonObject) strings(arg.getValue("text")) to arg["region"]?.let(::region) else strings(arg) to null
+
+    private fun onScreen(frame: Frame, text: String, region: List<Double>? = null): Boolean =
         frame.nodes().any { node -> listOfNotNull(node.text, node.desc).any { text in it } } ||
-            frame.ocr().any { text in it.text }
+            frame.ocr(region?.let { r -> frame.screenshot?.let { pixelsOf(r, it.width, it.height) } ?: return false }).any { text in it.text }
 }

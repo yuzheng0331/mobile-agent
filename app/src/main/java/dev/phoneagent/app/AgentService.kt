@@ -111,12 +111,24 @@ class AgentService : AccessibilityService(), Device {
     }
 
     /**
-     * Blocks the calling worker thread for one screenshot. Null when the system refuses,
-     * e.g. too soon after the previous one; the pixels stay in memory only.
+     * Blocks the calling worker thread for one screenshot; the pixels stay in memory only. The
+     * system refuses one taken too soon after the previous (Neo5: ~0.35–0.45 s apart), so a
+     * refusal is retried until [SCREENSHOT_RETRY_MS] has passed. Null if it still fails.
      */
     private fun screenshot(displayId: Int): Pixels? {
+        val deadline = nowMs() + SCREENSHOT_RETRY_MS
+        while (true) {
+            val (pixels, tooSoon) = screenshotOnce(displayId)
+            if (pixels != null || !tooSoon || nowMs() >= deadline) return pixels
+            Thread.sleep(SCREENSHOT_POLL_MS)
+        }
+    }
+
+    /** One attempt: the pixels, or null and whether the system said it was too soon. */
+    private fun screenshotOnce(displayId: Int): Pair<Pixels?, Boolean> {
         val done = CountDownLatch(1)
         var pixels: Pixels? = null
+        var tooSoon = false
         takeScreenshot(displayId, mainExecutor, object : TakeScreenshotCallback {
             override fun onSuccess(result: ScreenshotResult) {
                 result.hardwareBuffer.use { buffer ->
@@ -132,12 +144,13 @@ class AgentService : AccessibilityService(), Device {
             }
 
             override fun onFailure(errorCode: Int) {
-                Log.i("PhoneAgent", "screenshot failed: $errorCode")
+                tooSoon = errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_INVALID
+                if (!tooSoon) Log.i("PhoneAgent", "screenshot failed: $errorCode")
                 done.countDown()
             }
         })
         done.await(SCREENSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        return pixels
+        return pixels to tooSoon
     }
 
     override fun launch(packageName: String): Boolean {
@@ -269,6 +282,8 @@ class AgentService : AccessibilityService(), Device {
         private const val TOAST_WINDOW_MS = 5_000L
         private const val LAUNCH_TIMEOUT_MS = 8_000L
         private const val SCREENSHOT_TIMEOUT_MS = 3_000L
+        private const val SCREENSHOT_RETRY_MS = 1_000L
+        private const val SCREENSHOT_POLL_MS = 50L
         private const val LAUNCH_POLL_MS = 300L
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
     }

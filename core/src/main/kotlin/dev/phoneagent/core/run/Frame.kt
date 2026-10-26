@@ -74,6 +74,22 @@ class Frame(
 
     fun nodes(): Sequence<UiNode> = tree?.walk() ?: emptySequence()
 
+    /** Takes the screenshot now in runs that compare screens by it ([sameScreen]); it is otherwise lazy. */
+    fun freeze(): Frame = apply { if (recognizer != null) screenshot }
+
+    /**
+     * Whether [other] shows the same screen. The tree decides, except in runs with OCR: there
+     * the tree may be empty (WeChat), so equal trees are also compared by their screenshots.
+     * Without both screenshots, equal trees count as the same.
+     */
+    fun sameScreen(other: Frame): Boolean {
+        if (tree != other.tree) return false
+        if (recognizer == null) return true
+        val a = screenshot ?: return true
+        val b = other.screenshot ?: return true
+        return looksAlike(a, b)
+    }
+
     /** OCR of [region], or nothing when this run has no OCR (packs that don't need it). */
     fun ocr(region: Box? = null): List<TextHit> {
         val reader = recognizer ?: return emptyList()
@@ -91,6 +107,23 @@ class Frame(
 }
 
 private val ids = AtomicLong()
+
+/**
+ * Same size and at most 1% of a coarse grid of points changed noticeably: the clock and a
+ * blinking cursor stay under that, a page change or an opened menu does not.
+ */
+private fun looksAlike(a: Pixels, b: Pixels): Boolean {
+    if (a.width != b.width || a.height != b.height) return false
+    var points = 0
+    var changed = 0
+    for (y in 0 until a.height step 24) for (x in 0 until a.width step 24) {
+        points++
+        val p = a[x, y]
+        val q = b[x, y]
+        if ((0..16 step 8).sumOf { s -> Math.abs((p shr s and 0xFF) - (q shr s and 0xFF)) } > 48) changed++
+    }
+    return changed * 100 <= points
+}
 
 /** What a finder resolved to: the node to act on, or only a point for OCR hits. */
 data class Target(val bounds: Box, val node: UiNode? = null)

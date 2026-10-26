@@ -390,4 +390,42 @@ class CoreTest {
         fill(395, 1740, 410, 1760, 0xFFE04040.toInt()); fill(450, 1730, 576, 1770, bubble) // ... unread dot, 转文字
         assertEquals(Box(170, 1700, 372, 1808), find())
     }
+
+    @Test
+    fun `chatRow passes over rows whose name is skipped, and expectations can OCR a region only`() {
+        val w = 1080
+        val screen = IntArray(w * 2400) { 0xFF191919.toInt() }
+        fun fill(l: Int, t: Int, r: Int, b: Int, c: Int) { for (y in t until b) for (x in l until r) screen[y * w + x] = c }
+        fill(0, 240, w, 380, 0xFF2A2A2A.toInt()) // pinned row: lighter background
+        listOf(244, 437, 625).forEach { top -> fill(40, top, 172, top + 132, 0xFF3080E0.toInt()) }
+        val names = mapOf(244 to "公众号", 437 to "腾讯新闻", 625 to "小王")
+        val asked = mutableListOf<Box?>()
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = listOf(TextHit("微信(3)", Box(400, 120, 680, 170), 0.9f)).also { asked += region }
+            override fun readLine(pixels: Pixels, region: Box) = names[region.top]?.let { TextHit(it, region, 0.9f) }
+        }
+        val frame = Frame("p", null, recognizer = reader, shooter = { Pixels(w, 2400, screen) })
+        fun json(s: String) = Json.parseToJsonElement(s).jsonObject
+        assertEquals(Box(40, 625, 1026, 757), Builtins.registry.find(frame, json("""{"chatRow":true,"skip":["公众号","腾讯新闻"]}"""))?.bounds)
+        assertEquals(244, Builtins.registry.find(frame, json("""{"chatRow":true}"""))?.bounds?.top)
+
+        assertTrue(Builtins.registry.holds(frame, json("""{"anyText":{"text":["微信"],"region":[0.2,0.035,0.8,0.085]}}""")))
+        assertEquals(Box(216, 84, 864, 204), asked.single())
+        assertTrue(Builtins.registry.holds(frame, json("""{"gone":{"text":["通讯录"],"region":[0,0.95,1,1]}}""")))
+        val bad = """[{"do":"back","expect":{"anyText":{"text":["x"],"region":[0,1]}}}]"""
+        assertEquals(1, validate(pack(bad, needs = """["ocr"]""")).size)
+    }
+
+    @Test
+    fun `with OCR, equal trees still differ when the screenshots do`() {
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = emptyList<TextHit>()
+            override fun readLine(pixels: Pixels, region: Box) = null
+        }
+        fun shot(c: Int, menu: Boolean) = Pixels(240, 480, IntArray(240 * 480) { i -> if (menu && i / 240 in 200..300) 0xFFFFFFFF.toInt() else c })
+        fun frame(menu: Boolean, ocr: Boolean = true) = Frame("p", UiNode(), recognizer = reader.takeIf { ocr }, shooter = { shot(0xFF111111.toInt(), menu) })
+        assertTrue(frame(false).sameScreen(frame(false)))
+        assertTrue(!frame(false).sameScreen(frame(true)))
+        assertTrue(frame(false, ocr = false).sameScreen(frame(true, ocr = false))) // without OCR the tree decides
+    }
 }

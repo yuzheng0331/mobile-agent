@@ -3,13 +3,14 @@ package dev.phoneagent.app
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Packs
 import dev.phoneagent.core.pack.validate
@@ -81,15 +82,20 @@ class MainActivity : Activity() {
             }).run(pack)
             Log.i(TAG, "${pack.id} 结果：${result.reason ?: "完成"}")
             device.hideHint()
-            runOnUiThread {
-                status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n")
-                // The target app hides this screen, so say why it stopped over it; a dialog is the usual cause.
-                result.reason?.let { Toast.makeText(device, "已停止：$it", Toast.LENGTH_LONG).show() }
+            // The target app hides this screen, so say why it stopped over it, on the service's overlay
+            // strip: vivo drops toasts from a background app. It goes away by itself.
+            result.reason?.let { reason ->
+                device.showHint("Phone Agent 已停止：$reason")
+                Handler(Looper.getMainLooper()).postDelayed({ device.hideHint() }, STOP_HINT_MS)
             }
+            runOnUiThread { status.text = (result.reason ?: "完成") + "\n" + lines.joinToString("\n") }
         }
     }
 
-    private companion object { const val TAG = "PhoneAgent" }
+    private companion object {
+        const val TAG = "PhoneAgent"
+        const val STOP_HINT_MS = 6_000L
+    }
 
     private fun timing(it: StepTrace) =
         "第 ${it.index + 1} 步 ${it.action}：找 ${it.findMs} / 动 ${it.actMs} / 等 ${it.settleMs} / 查 ${it.checkMs} ms，${it.outcome}"

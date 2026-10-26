@@ -23,7 +23,11 @@ object Builtins {
             "listItem" to Finder(::listItem),
             "lastMessage" to Finder(::lastMessage),
             // The same for an empty tree, from the screenshot's layout (WeChat).
-            "lastBubble" to Finder { frame, _, _ -> frame.screenshot?.let(::lastBubble)?.let { Target(it) } },
+            "lastBubble" to object : Finder {
+                // Reads the screenshot, which runs only take when the pack needs OCR.
+                override val needs = setOf("ocr")
+                override fun find(frame: Frame, spec: JsonObject, registry: Registry) = frame.screenshot?.let(::lastBubble)?.let { Target(it) }
+            },
             "chatRow" to object : Finder {
                 override val needs = setOf("ocr")
                 override fun find(frame: Frame, spec: JsonObject, registry: Registry) = chatRow(frame, spec)

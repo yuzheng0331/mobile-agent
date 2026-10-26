@@ -457,4 +457,29 @@ class CoreTest {
         assertEquals(Outcome.MISSING, result.steps.last().outcome)
         assertTrue(device.nowMs() < 6_000, "waited ${device.nowMs()} ms")
     }
+
+    @Test
+    fun `an OCR target missing on the frame the previous step confirmed is decided there, with no new screenshot`() {
+        var shots = 0
+        val reader = object : TextRecognizer {
+            override fun recognize(pixels: Pixels, region: Box?) = listOf(TextHit("转发", Box(0, 0, 10, 10), 0.9f), TextHit("多选", Box(20, 0, 30, 10), 0.9f))
+            override fun readLine(pixels: Pixels, region: Box) = null
+        }
+        fun menu() = Frame("com.tencent.mm", UiNode(), recognizer = reader, shooter = { shots++; Pixels(10, 10, IntArray(100)) })
+        val device = object : Device {
+            var now = 0L
+            override fun capture(displayId: Int) = menu()
+            override fun launch(packageName: String) = true
+            override fun press(target: Target, long: Boolean) = true
+            override fun back() = true
+            override fun nowMs() = now
+            override fun awaitSettle(timeoutMs: Long) = true.also { now += minOf(300, timeoutMs) }
+        }
+        val result = Runner(device).run(Packs.parse("""{"schemaVersion":1,"id":"t","requires":["com.tencent.mm"],"needs":["ocr"],"steps":[
+            {"do":"back","expect":{"anyText":["多选"]}},
+            {"do":"tap","target":{"intent":"复制","find":[{"ocrText":"复制"}]},"ifMissing":"不是文字"}]}"""))
+        assertEquals(Outcome.MISSING, result.steps.last().outcome)
+        assertEquals(1, shots)
+        assertEquals(0L, result.steps.last().findMs)
+    }
 }

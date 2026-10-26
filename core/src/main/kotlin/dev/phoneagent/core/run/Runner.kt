@@ -104,8 +104,15 @@ class Runner(
             if (action.needsTarget) {
                 val start = device.nowMs()
                 // Only ever touch the apps the pack declares; another app in front is waited out, then refused.
-                hit = waitFor(step.timeoutMs, settled) { frame -> if (frame.packageName in requires) findTarget(step, frame) else null }
+                val confirmed = settled
                 settled = null
+                hit = if (confirmed != null && readsScreenshot(step)) {
+                    // The previous expectation read this very screenshot and found the screen ready, so
+                    // the answer is final: no second screenshot and OCR (each ~0.4 s + ~3 s).
+                    findTarget(step, confirmed)
+                } else {
+                    waitFor(step.timeoutMs, confirmed) { frame -> if (frame.packageName in requires) findTarget(step, frame) else null }
+                }
                 findMs += device.nowMs() - start
                 if (hit == null) {
                     return trace(if (device.capture().packageName in requires) Outcome.MISSING else Outcome.WRONG_APP)
@@ -195,6 +202,10 @@ class Runner(
             device.awaitSettle(left)
         }
     }
+
+    /** Whether every finder of the step reads the screenshot (OCR, layout) rather than the tree. */
+    private fun readsScreenshot(step: Step) =
+        step.target!!.find.all { spec -> registry.finders[spec.keys.first()]?.needs?.isNotEmpty() == true }
 
     private fun findTarget(step: Step, frame: Frame): IndexedValue<Target>? =
         step.target!!.find.withIndex().firstNotNullOfOrNull { (i, spec) ->

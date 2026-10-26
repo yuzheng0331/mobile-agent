@@ -30,8 +30,13 @@ class LiteRtModels(context: Context) : OcrModels {
     private lateinit var env: Environment
 
     init {
-        // Compiled GPU programs are cached here, so only the first start compiles (seconds per model).
-        val cache = File(context.cacheDir, "litert").apply { mkdirs() }.path
+        // Compiled GPU programs are cached, so only the first start after an install compiles (seconds
+        // per model). One folder per install: a new conversion can keep the name and size (all four
+        // widths have the same size), so older programs must not be picked up; they are deleted.
+        val install = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
+        val caches = File(context.cacheDir, "litert")
+        caches.listFiles()?.filter { it.name != install }?.forEach { it.deleteRecursively() }
+        val cache = File(caches, install).apply { mkdirs() }.path
         try {
             on {
                 env = Environment.create()
@@ -66,8 +71,7 @@ class LiteRtModels(context: Context) : OcrModels {
             gpuOptions = CompiledModel.GpuOptions(
                 precision = CompiledModel.GpuOptions.Precision.FP32,
                 serializationDir = cache,
-                // A new conversion has another size, so it doesn't pick up the old one's programs.
-                modelCacheKey = "$name-${context.assets.openFd(path).use { it.length }}",
+                modelCacheKey = name,
                 serializeProgramCache = true,
             )
         }, env)

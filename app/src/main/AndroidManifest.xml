@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No INTERNET permission: v1 never connects. A later "check for updates" adds it with a fixed host. -->
+<!-- No INTERNET permission yet: nothing connects. When something does, data may come in but screen content and user data never go out. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Package visibility (Android 11+): only the apps the packs may launch. -->

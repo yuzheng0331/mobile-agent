@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Phone Agent</string>
-    <string name="service_description">按你选择的任务包操作指定的几个 App：读取界面结构、点击、长按、返回。界面内容不发到网上，也不保存。</string>
+    <string name="service_description">按你选择的任务包操作指定的几个 App：读取界面结构、点击、长按、返回。界面内容只在本机处理，不保存。</string>
     <string name="ime_label">Phone Agent 加速（不是键盘，不打字）</string>
 </resources>

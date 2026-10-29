@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Parcel
 import android.os.Process
+import dev.phoneagent.app.Background
 import java.lang.reflect.Proxy
 import kotlin.system.exitProcess
 
@@ -112,6 +113,16 @@ object ShellServer {
         override fun key(displayId: Int, keyCode: Int): Boolean =
             ours(displayId) && run("input", "-d", "$displayId", "keyevent", "$keyCode")
 
+        // The role is meant for companion device apps: the qualification check is lifted for this one call only.
+        override fun grantRole(): Boolean {
+            if (!run("cmd", "role", "set-bypassing-role-qualification", "true")) return false
+            try {
+                return run("cmd", "role", "add-role-holder", Background.ROLE, PACKAGE)
+            } finally {
+                run("cmd", "role", "set-bypassing-role-qualification", "false")
+            }
+        }
+
         // Only on displays this server made: never the user's main display.
         @Synchronized
         private fun ours(displayId: Int) = displayId in displays
@@ -119,11 +130,15 @@ object ShellServer {
         private fun run(vararg command: String): Boolean {
             val process = ProcessBuilder(*command).redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
-            return process.waitFor() == 0 && "Error" !in output
+            val ok = process.waitFor() == 0 && "Error" !in output
+            // To the server's own log (shell_start.sh); these commands print no screen content.
+            if (!ok) println("failed (${process.exitValue()}): ${command.joinToString(" ")}\n$output")
+            return ok
         }
     }
 
     private const val SHELL_PACKAGE = "com.android.shell"
+    private const val PACKAGE = "dev.phoneagent.app"
     private val COMPONENT = Regex("[\\w.]+/[\\w.$]+")
 
     // What docs/virtual-display-experiments.md settled on: scrcpy's --new-display set, plus STEAL_TOP_FOCUS_DISABLED

@@ -5,6 +5,7 @@ import android.view.inputmethod.InputMethodManager
 import android.provider.Settings
 import android.content.ComponentName
 import android.accessibilityservice.GestureDescription
+import android.app.ActivityOptions
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -104,6 +105,11 @@ class AgentService : AccessibilityService(), Device {
         instance = this
         // A run cut short (crash, killed) may have left our input method selected: give the keyboard back.
         useFastCores(false)
+        // Also runs after an update, which takes the role away: say how to get it back (the shell server restores it).
+        if (Background.wanted(this) && Background.lostRole(this) && !Background.restoreRole(this)) {
+            showHint("Phone Agent：更新后后台运行的授权没了，启动一次 shell 服务就会自动恢复；在这之前后台任务用 shell 服务，没有就在前台跑")
+            mainHandler.postDelayed({ hideHint() }, ROLE_HINT_MS)
+        }
     }
 
     /**
@@ -241,6 +247,10 @@ class AgentService : AccessibilityService(), Device {
         val display = display
         if (display == 0) {
             startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } else if (Background.owns(display)) {
+            // Role mode: our display is trusted and public, so we may start other apps on it. The display is new
+            // each run (Background.release), so the app starts at its start screen without a back key.
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), ActivityOptions.makeBasic().setLaunchDisplayId(display).toBundle())
         } else {
             // An app may not start another app on a display it doesn't own; the shell user may.
             val started = runCatching { Shell.server?.start(intent.component!!.flattenToString(), display) == true }.getOrDefault(false)
@@ -331,10 +341,25 @@ class AgentService : AccessibilityService(), Device {
         return completed
     }
 
-    // The global back goes to the main display; the virtual display's back goes through the shell server.
-    override fun back(): Boolean =
-        if (display == 0) performGlobalAction(GLOBAL_ACTION_BACK)
-        else runCatching { Shell.server?.key(display, KeyEvent.KEYCODE_BACK) == true }.getOrDefault(false)
+    /**
+     * The global back goes to the top focused display, which stays the main one (the virtual display may not
+     * steal focus), so a virtual display's back is never global: the shell server's key, or else the app's own
+     * back button. Neither: false, and the run stops rather than press back on the user's app.
+     */
+    override fun back(): Boolean {
+        val display = display
+        if (display == 0) return performGlobalAction(GLOBAL_ACTION_BACK)
+        if (runCatching { Shell.server?.key(display, KeyEvent.KEYCODE_BACK) == true }.getOrDefault(false)) return true
+        val button = windowsOnAllDisplays[display].orEmpty()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .firstNotNullOfOrNull { it.root?.let(::backButton) }
+        return button?.let { actionable(it, long = false) }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    private fun backButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isVisibleToUser && (node.contentDescription?.toString() in BACK_LABELS || node.text?.toString() in BACK_LABELS)) return node
+        return (0 until node.childCount).firstNotNullOfOrNull { i -> node.getChild(i)?.let(::backButton) }
+    }
 
     override fun awaitSettle(timeoutMs: Long): Boolean {
         val start = nowMs()
@@ -394,6 +419,8 @@ class AgentService : AccessibilityService(), Device {
         private const val SCREENSHOT_POLL_MS = 50L
         private const val LAUNCH_POLL_MS = 300L
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
+        private const val ROLE_HINT_MS = 8_000L
+        private val BACK_LABELS = setOf("返回", "Navigate up")
     }
 }
 

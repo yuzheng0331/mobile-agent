@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.os.Process
+import dev.phoneagent.app.Background
 
 /**
  * Where [ShellServer] hands the app its binder. Only the shell user (or root) may: any other caller could
@@ -15,6 +16,9 @@ class ShellProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
         if (method != ATTACH || Binder.getCallingUid() !in listOf(Process.SHELL_UID, Process.ROOT_UID)) return null
         Shell.attach(extras?.getBinder(SHELL) ?: return null)
+        // An update took the role away: the server that just came is the chance to give it back.
+        val context = context!!
+        if (Background.wanted(context) && !Background.hasRole(context)) Thread { Background.restoreRole(context) }.start()
         return Bundle().apply {
             putBinder(APP, Shell.token)
             putInt(UID, Process.myUid())

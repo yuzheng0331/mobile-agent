@@ -12,4 +12,7 @@ interface IShell {
 
     // Sends one key (e.g. back) to that display's focused window.
     boolean key(int displayId, int keyCode);
+
+    // Gives Phone Agent the app streaming role (role mode, see Background); an update takes it away.
+    boolean grantRole();
 }

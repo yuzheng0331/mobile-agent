@@ -2,6 +2,10 @@
 <!-- No INTERNET permission yet: nothing connects. When added, it is only for app updates, packs, and the own-site APIs a pack declares; screen content never goes out. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Background role mode (Background): granted only while we hold the app streaming role. -->
+    <uses-permission android:name="android.permission.ADD_TRUSTED_DISPLAY" />
+    <uses-permission android:name="android.permission.ADD_ALWAYS_UNLOCKED_DISPLAY" />
+
     <!-- Package visibility (Android 11+): only the apps the packs may launch. -->
     <queries>
         <package android:name="com.tencent.mm" />

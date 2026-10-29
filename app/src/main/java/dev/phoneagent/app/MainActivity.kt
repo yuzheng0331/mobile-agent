@@ -34,8 +34,12 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         service = TextView(this).apply { textSize = 16f }
         status = TextView(this).apply { textSize = 16f }
-        // Runs on a virtual display while the user goes on using the phone; needs the shell server (shell.ShellServer).
-        inBackground = CheckBox(this).apply { textSize = 16f }
+        // Runs on a virtual display while the user goes on using the phone (Background: role or shell mode).
+        inBackground = CheckBox(this).apply {
+            textSize = 16f
+            isChecked = Background.wanted(context)
+            setOnCheckedChangeListener { _, on -> Background.want(context, on) }
+        }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
@@ -66,7 +70,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         service.text = if (AgentService.instance != null) "无障碍服务：已开启" else "无障碍服务：未开启"
-        inBackground.text = "后台运行（在虚拟屏上跑，你可以照常用手机）" + if (Shell.server == null) "：shell 服务未启动" else ""
+        inBackground.text = "后台运行（在虚拟屏上跑，你可以照常用手机）" + when {
+            Background.hasRole(this) -> ""
+            Shell.server != null -> "：shell 模式"
+            Background.lostRole(this) -> "：更新后授权没了，启动一次 shell 服务就会恢复"
+            else -> "：未授权，启动 shell 服务后自动授权"
+        }
     }
 
     private fun run(pack: Pack) {
@@ -74,15 +83,17 @@ class MainActivity : Activity() {
         // The virtual display gets no status bar: make it that much shorter, so apps lay out as on the main display.
         val metrics = windowManager.maximumWindowMetrics
         val statusBar = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
+        // Neither role nor shell server: run on the main display rather than not at all.
         val display = if (!inBackground.isChecked) 0 else {
-            Shell.display(metrics.bounds.width(), metrics.bounds.height() - statusBar, resources.displayMetrics.densityDpi)
-                ?: return run { status.text = "后台运行不可用：shell 服务未启动或建虚拟屏失败（见 tools/probe/shell_start.sh）" }
+            Background.display(this, metrics.bounds.width(), metrics.bounds.height() - statusBar, resources.displayMetrics.densityDpi) ?: 0
         }
+        val fallback = inBackground.isChecked && display == 0
         status.text = "运行中：${pack.id}"
         val ocr = "ocr" in pack.needs
         device.useOcr(ocr)
         worker.execute {
             val lines = mutableListOf<String>()
+            if (fallback) lines += "后台运行不可用（没有授权，也没有 shell 服务），改在前台跑"
             // In the background the user may be typing: never take their keyboard away.
             val fast = ocr && display == 0 && device.useFastCores(true)
             if (ocr && !fast) lines += if (display != 0) "后台运行：OCR 只能用部分 CPU 核" else "未启用加速：OCR 只能用部分 CPU 核，会慢约 30%"
@@ -108,6 +119,7 @@ class MainActivity : Activity() {
                 }).run(pack)
             } finally {
                 device.display = 0
+                if (Background.owns(display)) Background.release()
                 // Back to the user's keyboard whatever happened (a crash is covered on the next service start).
                 if (fast) device.useFastCores(false)
             }

@@ -16,6 +16,8 @@ import dev.phoneagent.core.run.Target
  * adb shell am broadcast -n dev.phoneagent.app/.DisplayProbeReceiver --ei display <id> --es do <what> ...
  *   windows                       every display's windows: type, package, node count
  *   shot                          one screenshot of the display: size, time, mean brightness
+ *   ocr --es label <label>        whole-display OCR: how many boxes, and where the box reading exactly <label> is
+ *   find --es label <label>       where the node whose text or description is exactly <label> is
  *   tap --ei x <px> --ei y <px>   a gesture at that point of the display
  *   click --es label <label>      a node action on the node whose text or description is exactly <label>
  */
@@ -68,6 +70,19 @@ class DisplayProbeReceiver : BroadcastReceiver() {
                 service.capture(display) // the gesture goes to the display of the last capture
                 val done = service.press(Target(Box(x, y, x + 1, y + 1)), long = false)
                 Log.i(TAG, "tap display $display at $x,$y: ${if (done) "completed" else "not completed"}")
+            }
+            "ocr" -> {
+                // For apps whose tree is empty (WeChat): proves the display shows the real UI.
+                val label = intent.getStringExtra("label")
+                service.useOcr(true)
+                val hits = service.capture(display).ocr()
+                service.useOcr(false)
+                Log.i(TAG, "ocr display $display: ${hits.size} boxes, $label at ${hits.firstOrNull { it.text == label }?.bounds ?: "-"}")
+            }
+            "find" -> {
+                val label = intent.getStringExtra("label")
+                val node = service.capture(display).tree?.walk()?.firstOrNull { it.text == label || it.desc == label }
+                Log.i(TAG, "find display $display: ${node?.bounds ?: "no such node"}")
             }
             "click" -> {
                 val label = intent.getStringExtra("label")

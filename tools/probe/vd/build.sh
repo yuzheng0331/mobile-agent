@@ -16,5 +16,6 @@ rm -rf "$out" && mkdir -p "$out/classes"
 echo "built $out/vd.jar"
 
 if [[ "${1:-}" == "--push" ]]; then
-  adb push "$out/vd.jar" /data/local/tmp/vd.jar
+  # Git Bash would turn the phone path into a Windows one.
+  MSYS_NO_PATHCONV=1 adb push "$(command -v cygpath >/dev/null && cygpath -w "$out/vd.jar" || echo "$out/vd.jar")" /data/local/tmp/vd.jar
 fi

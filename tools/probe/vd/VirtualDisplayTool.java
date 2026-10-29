@@ -28,10 +28,12 @@ import java.nio.ByteBuffer;
  *        <width> <height> <dpi> [fps] [FLAG,FLAG,...]
  */
 public final class VirtualDisplayTool {
-    // What scrcpy's --new-display asks for on Android 14 (names of DisplayManager.VIRTUAL_DISPLAY_FLAG_*).
+    // What scrcpy's --new-display asks for on Android 14 (names of DisplayManager.VIRTUAL_DISPLAY_FLAG_*), plus
+    // STEAL_TOP_FOCUS_DISABLED: without it any input on this display makes it the top focused one, and the
+    // Enter key typed on the main display then goes to the app here.
     private static final String DEFAULT_FLAGS = "PUBLIC,OWN_CONTENT_ONLY,SUPPORTS_TOUCH,ROTATES_WITH_CONTENT,"
             + "DESTROY_CONTENT_ON_REMOVAL,TRUSTED,OWN_DISPLAY_GROUP,ALWAYS_UNLOCKED,TOUCH_FEEDBACK_DISABLED,"
-            + "OWN_FOCUS,DEVICE_DISPLAY_GROUP";
+            + "OWN_FOCUS,DEVICE_DISPLAY_GROUP,STEAL_TOP_FOCUS_DISABLED";
     private static final long REPORT_MS = 2_000;
 
     private static long frames;

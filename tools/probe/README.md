@@ -1,3 +1,16 @@
+# tools/probe
+
+电脑端工具。本 README 下面是 `probe.py`（抓界面树和截图）的用法，最早用于第 1 关可行性探测，现在用于任务包定稿前 probe 所有起点和分支（架构文档第 8 节）。其他工具：
+
+| 工具 | 用途 | 用法见 |
+|---|---|---|
+| `ocr_labels.py`、`ocr_reference.py` | OCR 标准答案和对照参考 | `docs/ocr-experiments.md` 第 6 节 |
+| `ocr_tflite.py`、`ocr_litert_assets.sh` | 把官方 ONNX 转成识别用的固定尺寸 `.tflite` | `app/CLAUDE.md`“OCR 模型” |
+| `vd/` | 虚拟屏实验：shell 身份建屏、主屏流畅度 | `docs/virtual-display-experiments.md` 重跑步骤 |
+| `shell_start.sh` | 开发时启动后台模式的 shell 服务 | `app/CLAUDE.md`“后台模式” |
+
+`out/` 里是真实界面内容，不进 git。
+
 # 第 1 关：界面树可行性探测
 
 目的：确认 微信 / QQ / 夸克 的关键界面能不能不靠坐标定位目标。只读界面，不做自动点击（`launch` 只启动 App）。

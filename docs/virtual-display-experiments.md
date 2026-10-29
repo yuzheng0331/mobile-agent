@@ -57,7 +57,55 @@
 - **toast 不带虚拟屏的 id**：微信的“已复制”提示，事件里的 displayId 不是虚拟屏，被“只看任务所在的屏”的过滤丢掉了，第 5 步因此以为复制没生效。现在只有“界面变化”事件按屏过滤，toast 不过滤。**这个提示会显示在用户的主屏上**（系统统一在主屏画 toast），用户能看到“已复制”弹出来。
 - **截图内存泄漏**（前台也有，后台截图更频繁所以暴露了）：系统在截图回调执行完以后，还长时间留着回调对象，回调里存着的 10 MB 截图数组就释放不掉。一次后台运行里 Java 堆从 11 MB 涨到 256 MB，然后崩溃（OutOfMemoryError）。改成回调只经过一个“槽”转交截图、取走后清空以后，整个运行期间堆稳定在约 5.5 MB。
 
-## 5. 结论
+## 5. 怎么拿到 shell 身份，以及不经过 shell 的角色模式（2026-10-29）
+
+### 5.1 无线调试和 Wi-Fi
+
+普通 App 要拿到 shell 身份，只能连本机的 adb。手机自己连自己，只能用 Android 11 起的“无线调试”。
+
+| 情况 | 结果 |
+|---|---|
+| 只开流量，或只开个人热点（没连 Wi-Fi） | 无线调试打不开 |
+| shell 服务启动后，关掉无线调试，再关掉 Wi-Fi | 服务还在，QQ 后台任务照常跑完 |
+| 手机重启 | 服务没了，要再启动一次 |
+
+所以 Wi-Fi 只在启动 shell 服务的那一下需要（连哪个 Wi-Fi 都行，不需要能上网），之后断开没有影响。Shizuku（非 root）也一样，要靠无线调试或电脑启动。
+
+### 5.2 能不能一次授权、重启后还在（手机上 `dumpsys package android` 的结果）
+
+| 权限 | 保护级别 | 结论 |
+|---|---|---|
+| `WRITE_SECURE_SETTINGS`、`INTERACT_ACROSS_USERS` | 带 `development` | `pm grant` 能授予，重启后还在；但都不能建可信屏，也不能把别的 App 启动到自己的屏上 |
+| `INTERNAL_SYSTEM_WINDOW` | `signature\|module` | 侧载 App 拿不到 |
+| `ACTIVITY_EMBEDDING`、`REAL_GET_TASKS`、`MANAGE_DEBUGGING` | `signature\|privileged` | 拿不到 |
+| `CAPTURE_VIDEO_OUTPUT`、`CAPTURE_SECURE_VIDEO_OUTPUT`、`INJECT_EVENTS`、`START_ANY_ACTIVITY` | `signature` | 拿不到 |
+| `ADD_TRUSTED_DISPLAY`、`ADD_ALWAYS_UNLOCKED_DISPLAY` | `signature\|role` | 持有特定系统角色时能拿到（见 5.3） |
+| `CREATE_VIRTUAL_DEVICE` | `internal\|role` | 同上 |
+| `MANAGE_ACCESSIBILITY` | `signature\|setup\|recents\|role` | app streaming 角色不带它 |
+| `REQUEST_COMPANION_PROFILE_APP_STREAMING` | `signature\|privileged` | 侧载 App 不能走正规的伴侣设备关联去拿这个角色 |
+
+Codex 另外查了 AOSP（DSH 超时没有结果），结论一致：没有任何能一次授予、重启后还在的权限，可以让侧载 App 把别的 App 启动到虚拟屏上。小窗（freeform）、MediaProjection、工作资料、设备所有者都解决不了这个问题。
+
+### 5.3 角色模式：App 自己建屏
+
+- **分配**（要 shell 身份做一次）：`cmd role set-bypassing-role-qualification true` → `cmd role add-role-holder android.app.role.COMPANION_DEVICE_APP_STREAMING dev.phoneagent.app` → `cmd role set-bypassing-role-qualification false`。前后两条是系统留给测试用的开关，不是给普通 App 的正规途径。分配后 Phone Agent 得到 `ADD_TRUSTED_DISPLAY`、`ADD_ALWAYS_UNLOCKED_DISPLAY`、`CREATE_VIRTUAL_DEVICE`（`GRANTED_BY_ROLE`）。前提是 manifest 里声明了这些权限。
+- **重启后还在**（实测）；**App 更新或重装后被系统收回**（实测：系统在包变化时重新检查角色资格，我们不合格）。系统 OTA 升级后会不会被收回，还没测。
+
+| App 自己建的屏 | 结果 |
+|---|---|
+| 没有角色，不可信的私有屏 | 能建，但启动 QQ 时报 `SecurityException`（不可信的屏只允许可嵌入的 Activity） |
+| 有角色，可信但没加 `PUBLIC` | QQ 能启动上去，但无障碍看不到这块屏（窗口列表里没有它，截图返回错误 4，无效显示） |
+| 有角色，`PUBLIC \| OWN_CONTENT_ONLY \| TRUSTED \| ALWAYS_UNLOCKED \| OWN_FOCUS \| STEAL_TOP_FOCUS_DISABLED …`（`0x17dc9`） | **全部可用**：QQ 启动上去；无障碍读树（280 个节点）、截图（1080x2316，695 ms）、节点点击、手势都行；顶层焦点一直是 0 |
+
+依据（Android 14 AOSP 源码）：
+- `AccessibilityManagerService.isValidDisplay`：没有 `PUBLIC` 的虚拟屏是私有屏，无障碍不追踪（SystemUI 自己的除外）。
+- `DisplayManagerService.createVirtualDisplayInternal`：只有带 `AUTO_MIRROR` 的屏才检查 `CAPTURE_VIDEO_OUTPUT`。`OWN_CONTENT_ONLY` 会去掉 `AUTO_MIRROR`，所以 `PUBLIC` 本身不要权限。
+- `ActivityTaskSupervisor.isCallerAllowedToLaunchOnDisplay`：可信、非私有的屏，只要求用户在这块屏上可见，就允许启动别的 App。
+- 不用 `AccessibilityDisplayProxy`：它要求屏属于调用者自己建的 VirtualDevice；而且屏一旦被代理，事件只发给代理（`dispatchAccessibilityEventLocked`），系统里的无障碍服务反而收不到。
+
+**虚拟屏上不能用全局返回**：`SystemActionPerformer.sendDownAndUpKeyEvents` 把返回键注入到 `getLastNonProxyTopFocusedDisplayId()`，也就是顶层焦点屏。`STEAL_TOP_FOCUS_DISABLED` 让顶层焦点一直留在主屏，所以全局返回会按到用户正在用的 App 上。去掉这个标志的话，又会回到第 7 项的回车失效问题。
+
+## 6. 结论
 
 **后台模式可行**，做法定为：
 - **身份**：Shizuku（或 adb）的 shell 身份建屏、启动 App；读树、截图、手势、点击走我们现有的无障碍服务，按 `displayId` 区分。
@@ -67,7 +115,7 @@
 **要处理的问题**：
 - **同一个 App 抢屏**：用户在主屏打开任务正在用的 App，任务就失去目标。运行时要盯住目标 App 在哪块屏，被拉走就暂停、发通知，等用户用完再从“按状态继续”接上。
 - **声音**：虚拟屏上 App 的声音从扬声器放出来。shell 身份可以用 `appops set <包名> PLAY_AUDIO ignore` 临时静音某个 App，任务结束再恢复（未测）。
-- **授权**：Shizuku 需要无线调试启动，手机重启后要再启动一次。
+- **授权**：shell 服务要靠无线调试启动，只在启动那一下需要 Wi-Fi（5.1）。shell 模式每次重启后要启动一次；角色模式只在 App 更新后要用 shell 重新分配一次角色（5.3）。启动方式定为 App 内置启动器，见设计文档第 6 节。
 - **角色模式没有返回键**：只能点界面上的返回节点。任务包中途写了 `back`、而那一页的界面树是空的（如微信聊天页），这一步会失败；要退到按坐标点左上角的返回图标（用户 2026-10-30 定）。每次任务结束销毁虚拟屏、下次新建，App 在新屏上从首页开始，所以“启动后退回首页”不受影响。试过启动时清空任务栈（`FLAG_ACTIVITY_CLEAR_TASK`）：微信窗口一直全黑（截图亮度 0），无障碍看不到这块屏上的任何窗口，不采用。
 
 **接下来要测的**：
@@ -77,7 +125,7 @@
 - 长时间运行和风控：小号上连续跑几天。
 - `appops` 静音。
 
-## 6. 重跑步骤
+## 7. 重跑步骤
 
 后台模式跑任务包：
 

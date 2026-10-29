@@ -84,6 +84,17 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // The launcher may get the role back while this screen is up.
+        Background.onChange = { runOnUiThread(::refresh) }
+        refresh()
+    }
+
+    override fun onPause() {
+        Background.onChange = null
+        super.onPause()
+    }
+
+    private fun refresh() {
         service.text = if (AgentService.instance != null) "无障碍服务：已开启" else "无障碍服务：未开启"
         inBackground.text = "后台运行（在虚拟屏上跑，你可以照常用手机）" + when {
             Background.hasRole(this) -> ""

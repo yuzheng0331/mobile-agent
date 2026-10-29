@@ -3,6 +3,7 @@ package dev.phoneagent.app.shell
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
+import dev.phoneagent.app.Background
 
 /** The app's side of [ShellServer]: there once a server has attached, gone again when it dies. */
 object Shell {
@@ -20,9 +21,11 @@ object Shell {
             Log.i("PhoneAgent", "后台模式：shell 服务已退出")
             server = null
             display = NONE
+            Background.changed()
         }, 0)
         display = NONE
         server = IShell.Stub.asInterface(binder)
+        Background.changed()
     }
 
     /** The background display, made the given size if there is none yet; null without a server or when it fails. */

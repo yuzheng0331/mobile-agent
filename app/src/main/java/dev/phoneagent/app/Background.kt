@@ -35,6 +35,11 @@ object Background {
 
     fun hasRole(context: Context) = PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
+    /** Told when the role or the shell server comes or goes, from any thread (MainActivity's label). */
+    @Volatile var onChange: (() -> Unit)? = null
+
+    fun changed() = onChange?.invoke()
+
     /** The user's "后台运行" choice. */
     fun wanted(context: Context) = prefs(context).getBoolean(WANTED, false)
 
@@ -50,6 +55,7 @@ object Background {
         val done = granted && hasRole(context)
         Log.i("PhoneAgent", "后台模式：分配角色${if (done) "成功" else if (granted) "后仍没有权限" else "失败（见 shell 服务日志）"}")
         if (done) prefs(context).edit().putBoolean(HAD_ROLE, true).apply()
+        if (done) changed()
         return done
     }
 

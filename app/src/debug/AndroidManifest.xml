@@ -10,6 +10,11 @@
             android:name=".OcrBenchActivity"
             android:exported="true" />
 
+        <!-- The virtual-display experiment: adb shell sends it what to try on which display. -->
+        <receiver
+            android:name=".DisplayProbeReceiver"
+            android:exported="true" />
+
         <service
             android:name=".BenchService"
             android:exported="false"

@@ -3,7 +3,10 @@ package dev.phoneagent.app
 import android.accessibilityservice.AccessibilityService
 import android.view.inputmethod.InputMethodManager
 import android.provider.Settings
+import android.Manifest
 import android.content.ComponentName
+import android.content.Context
+import android.content.pm.PackageManager
 import android.accessibilityservice.GestureDescription
 import android.app.ActivityOptions
 import android.content.Intent
@@ -104,6 +107,7 @@ class AgentService : AccessibilityService(), Device {
 
     override fun onServiceConnected() {
         instance = this
+        running(this, true)
         // A run cut short (crash, killed) may have left our input method selected: give the keyboard back.
         useFastCores(false)
         // At boot and after an update. Without the role, start the shell server over wireless debugging: it gives
@@ -140,6 +144,12 @@ class AgentService : AccessibilityService(), Device {
 
     private fun isEnabledInputMethod(id: String) =
         getSystemService(InputMethodManager::class.java).enabledInputMethodList.any { it.id == id }
+
+    // Only a proper unbind gets here (the user turning the service off); a killed process never does.
+    override fun onUnbind(intent: Intent?): Boolean {
+        running(this, false)
+        return super.onUnbind(intent)
+    }
 
     override fun onDestroy() {
         instance = null
@@ -420,6 +430,41 @@ class AgentService : AccessibilityService(), Device {
     companion object {
         @Volatile var instance: AgentService? = null
             private set
+
+        /**
+         * Android doesn't rebind an accessibility service whose process was killed (a permission change, low
+         * memory), and a force stop (swiping the app away on vivo) takes it off the enabled list. When ours went
+         * down like that, without an unbind (the user turning it off does unbind), and we hold
+         * WRITE_SECURE_SETTINGS (granted by the launcher), put it back: off and on again, since a listed but dead
+         * service is only rebound when the list changes.
+         */
+        @Synchronized
+        fun revive(context: Context) {
+            // Once per process.
+            if (revived || instance != null || !context.getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE).getBoolean(RUNNING, false)) return
+            if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return
+            val resolver = context.contentResolver
+            val me = ComponentName(context, AgentService::class.java)
+            val enabled = Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+                .split(':').filter { it.isNotBlank() }
+            val others = enabled.filter { ComponentName.unflattenFromString(it) != me }
+            Settings.Secure.putString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, others.joinToString(":"))
+            Handler(Looper.getMainLooper()).postDelayed({
+                Settings.Secure.putString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, (others + me.flattenToString()).joinToString(":"))
+                Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            }, REBIND_GAP_MS)
+            revived = true
+            Log.i("PhoneAgent", "无障碍服务被系统断开（进程被杀或强行停止），已重新打开")
+        }
+
+        private var revived = false
+
+        private fun running(context: Context, on: Boolean) =
+            context.getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE).edit().putBoolean(RUNNING, on).commit()
+
+        private const val SERVICE_PREFS = "service"
+        private const val RUNNING = "running"
+        private const val REBIND_GAP_MS = 500L
 
         private const val SETTLE_MS = 300L
         private const val POLL_MS = 50L

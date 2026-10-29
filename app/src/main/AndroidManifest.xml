@@ -23,6 +23,7 @@
     </queries>
 
     <application
+        android:name=".PhoneAgentApp"
         android:allowBackup="false"
         android:label="@string/app_name">
 

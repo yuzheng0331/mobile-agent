@@ -16,7 +16,7 @@ import dev.phoneagent.core.run.Target
  * adb shell am broadcast -n dev.phoneagent.app/.DisplayProbeReceiver --ei display <id> --es do <what> ...
  *   windows                       every display's windows: type, package, node count
  *   shot                          one screenshot of the display: size, time, mean brightness
- *   ocr --es label <label>        whole-display OCR: how many boxes, and where the box reading exactly <label> is
+ *   ocr --es label <label>        whole-display OCR: how many boxes, and where the boxes containing <label> are
  *   find --es label <label>       where the node whose text or description is exactly <label> is
  *   tap --ei x <px> --ei y <px>   a gesture at that point of the display
  *   click --es label <label>      a node action on the node whose text or description is exactly <label>
@@ -77,7 +77,7 @@ class DisplayProbeReceiver : BroadcastReceiver() {
                 service.useOcr(true)
                 val hits = service.capture(display).ocr()
                 service.useOcr(false)
-                Log.i(TAG, "ocr display $display: ${hits.size} boxes, $label at ${hits.firstOrNull { it.text == label }?.bounds ?: "-"}")
+                Log.i(TAG, "ocr display $display: ${hits.size} boxes, $label at ${hits.filter { label != null && label in it.text }.map { it.bounds }}")
             }
             "find" -> {
                 val label = intent.getStringExtra("label")

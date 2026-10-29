@@ -37,6 +37,13 @@
                 android:resource="@xml/agent_service" />
         </service>
 
+        <!-- Background mode: the shell server (shell.ShellServer) hands its binder over here. Exported so
+             the shell user can reach it; ShellProvider ignores every other caller. -->
+        <provider
+            android:name=".shell.ShellProvider"
+            android:authorities="dev.phoneagent.app.shell"
+            android:exported="true" />
+
         <!-- No keyboard, never types: selected during OCR runs only, for all CPU cores (AgentIme). -->
         <service
             android:name=".AgentIme"

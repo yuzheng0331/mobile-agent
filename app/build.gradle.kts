@@ -24,6 +24,9 @@ android {
     // Official task packs ship as assets straight from the repo's packs/ folder.
     sourceSets["main"].assets.srcDir("../packs")
 
+    // IShell: the background mode's shell server (ShellServer) and the app talk over it.
+    buildFeatures { aidl = true }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

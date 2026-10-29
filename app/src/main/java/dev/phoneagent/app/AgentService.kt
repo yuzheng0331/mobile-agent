@@ -11,13 +11,16 @@ import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.TextView
 import dev.phoneagent.core.run.Box
@@ -28,9 +31,12 @@ import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.run.Pixels
 import dev.phoneagent.core.run.TextRecognizer
 import dev.phoneagent.core.run.UiNode
+import dev.phoneagent.app.shell.Shell
 import java.util.IdentityHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The accessibility service, and the [Device] the runner drives. Reads the window
@@ -77,6 +83,23 @@ class AgentService : AccessibilityService(), Device {
     @Volatile private var lastNodes: Map<UiNode, AccessibilityNodeInfo> = emptyMap()
     @Volatile private var lastDisplayId = 0
 
+    /**
+     * The display runs act on: 0, or background mode's virtual display ([Shell]). Reading, screenshots and
+     * gestures already go by display; launching and back go through the shell server there.
+     */
+    @Volatile var display = 0
+
+    /**
+     * How far the virtual display's content sits below the main display's top: the main status bar, which a
+     * virtual display lacks (vivo draws none there, even with system decorations). The virtual display is made
+     * that much shorter, and what we read of it is moved down by this and what we press moved up, so packs
+     * see the same coordinates as on the main display (WeChat: title, list and tabs all line up).
+     */
+    @Volatile var displayTop = 0
+
+    // The shift for what was read from / is done on a display.
+    private fun shift(displayId: Int) = if (displayId != 0 && displayId == display) displayTop else 0
+
     override fun onServiceConnected() {
         instance = this
         // A run cut short (crash, killed) may have left our input method selected: give the keyboard back.
@@ -118,6 +141,7 @@ class AgentService : AccessibilityService(), Device {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.packageName == packageName) return
         when (event.eventType) {
+            // Not tied to the run's display: a toast from an app on the virtual display doesn't come with its id.
             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED ->
                 if (event.className?.contains("Toast") == true) {
                     synchronized(toasts) { toasts.addLast(SystemClock.uptimeMillis() to event.text.joinToString(" ")) }
@@ -125,7 +149,11 @@ class AgentService : AccessibilityService(), Device {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-            -> lastChangeAt = SystemClock.uptimeMillis()
+            -> {
+                // In background mode the user is busy on the main display: only the run's display says when the UI has settled.
+                if (display != 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && event.displayId != display) return
+                lastChangeAt = SystemClock.uptimeMillis()
+            }
         }
     }
 
@@ -133,12 +161,14 @@ class AgentService : AccessibilityService(), Device {
 
     override fun nowMs(): Long = SystemClock.uptimeMillis()
 
+    override fun capture(): Frame = capture(display)
+
     override fun capture(displayId: Int): Frame {
         val nodes = IdentityHashMap<UiNode, AccessibilityNodeInfo>()
         val roots = (windowsOnAllDisplays[displayId] ?: emptyList())
             .mapNotNull { it.root }
             .filter { it.packageName != packageName }
-        val tree = UiNode(children = roots.map { convert(it, nodes) })
+        val tree = UiNode(children = roots.map { convert(it, nodes, shift(displayId)) })
         lastNodes = nodes
         lastDisplayId = displayId
         val since = nowMs() - TOAST_WINDOW_MS
@@ -146,8 +176,13 @@ class AgentService : AccessibilityService(), Device {
             while (toasts.isNotEmpty() && toasts.first().first < since) toasts.removeFirst()
             toasts.map { it.second }
         }
-        return Frame(rootInActiveWindow?.packageName?.toString(), tree, recent, displayId, recognizer, shooter = { screenshot(displayId) })
+        return Frame(foreground(displayId), tree, recent, displayId, recognizer, shooter = { screenshot(displayId) })
     }
+
+    /** The app in front on a display: the active window's on the main one, the topmost app window's elsewhere. */
+    fun foreground(displayId: Int): String? =
+        if (displayId == 0) rootInActiveWindow?.packageName?.toString()
+        else windowsOnAllDisplays[displayId]?.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }?.root?.packageName?.toString()
 
     /**
      * Blocks the calling worker thread for one screenshot; the pixels stay in memory only. The
@@ -166,44 +201,59 @@ class AgentService : AccessibilityService(), Device {
     /** One attempt: the pixels, or null and whether the system said it was too soon. */
     private fun screenshotOnce(displayId: Int): Pair<Pixels?, Boolean> {
         val done = CountDownLatch(1)
-        var pixels: Pixels? = null
-        var tooSoon = false
+        // The system holds on to the callback long after it ran, and with it whatever the callback holds: a 10 MB
+        // screenshot each, which filled the 256 MB heap within one background run. So the pixels only pass through
+        // this slot, emptied below, and a callback that comes after we stopped waiting keeps nothing.
+        val slot = AtomicReference<Pixels?>()
+        val waiting = AtomicBoolean(true)
+        val tooSoon = AtomicBoolean()
+        // A black strip where the main display has its status bar (displayTop).
+        val top = shift(displayId)
         takeScreenshot(displayId, mainExecutor, object : TakeScreenshotCallback {
             override fun onSuccess(result: ScreenshotResult) {
                 result.hardwareBuffer.use { buffer ->
+                    if (!waiting.get()) return
                     val bitmap = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
                     if (bitmap != null) {
-                        val argb = IntArray(bitmap.width * bitmap.height)
-                        bitmap.getPixels(argb, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                        pixels = Pixels(bitmap.width, bitmap.height, argb)
+                        val argb = IntArray(bitmap.width * (top + bitmap.height))
+                        bitmap.getPixels(argb, top * bitmap.width, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                        slot.set(Pixels(bitmap.width, top + bitmap.height, argb))
                         bitmap.recycle()
                     }
                 }
+                if (!waiting.get()) slot.set(null)
                 done.countDown()
             }
 
             override fun onFailure(errorCode: Int) {
-                tooSoon = errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
-                if (!tooSoon) Log.i("PhoneAgent", "screenshot failed: $errorCode")
+                tooSoon.set(errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT)
+                if (!tooSoon.get()) Log.i("PhoneAgent", "screenshot failed: $errorCode")
                 done.countDown()
             }
         })
         done.await(SCREENSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        return pixels to tooSoon
+        waiting.set(false)
+        return slot.getAndSet(null) to tooSoon.get()
     }
 
     override fun launch(packageName: String): Boolean {
-        // shortcut: main display only; a virtual display would pass ActivityOptions.setLaunchDisplayId.
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
-        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val display = display
+        if (display == 0) {
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } else {
+            // An app may not start another app on a display it doesn't own; the shell user may.
+            val started = runCatching { Shell.server?.start(intent.component!!.flattenToString(), display) == true }.getOrDefault(false)
+            if (!started) return false
+        }
         // Only report success once the app is really in front: vivo may hold it behind a jump-confirm dialog.
         var deadline = nowMs() + LAUNCH_TIMEOUT_MS
         var asked = false
         try {
             while (nowMs() < deadline) {
-                if (rootInActiveWindow?.packageName == packageName) return true
+                if (foreground(display) == packageName) return true
                 // vivo blocks taps on this dialog from accessibility (node clicks and gestures), so ask the user.
-                if (!asked && jumpDialogShown()) {
+                if (display == 0 && !asked && jumpDialogShown()) {
                     asked = true
                     deadline = nowMs() + USER_CONFIRM_TIMEOUT_MS
                     showHint("Phone Agent：请在下方弹窗里点“始终打开”，任务会继续")
@@ -211,7 +261,7 @@ class AgentService : AccessibilityService(), Device {
                 // Short slices: a live camera preview never goes quiet, so a full settle would eat the whole timeout.
                 awaitSettle(minOf(LAUNCH_POLL_MS, deadline - nowMs()))
             }
-            Log.i("PhoneAgent", "launch $packageName timed out; active=${rootInActiveWindow?.packageName}")
+            Log.i("PhoneAgent", "launch $packageName timed out; active=${foreground(display)}")
             return false
         } finally {
             if (asked) hideHint()
@@ -258,12 +308,14 @@ class AgentService : AccessibilityService(), Device {
     override fun press(target: Target, long: Boolean): Boolean {
         val action = if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK
         val info = target.node?.let { lastNodes[it] }
+        // Targets are in the packs' (main display) coordinates; the virtual display's are displayTop higher.
+        val bounds = target.bounds.toRect().apply { offset(0, -shift(lastDisplayId)) }
         // The screen may have changed since capture (a new message moved the bubble, a menu closed): never act on
         // stale coordinates or a recycled view; report a miss so the runner finds the target again.
-        if (info != null && (!info.refresh() || Rect().also(info::getBoundsInScreen) != target.bounds.toRect())) return false
+        if (info != null && (!info.refresh() || Rect().also(info::getBoundsInScreen) != bounds)) return false
         val node = info?.let { actionable(it, long) }
         if (node?.performAction(action) == true) return true
-        val path = Path().apply { moveTo(target.bounds.centerX.toFloat(), target.bounds.centerY.toFloat()) }
+        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
         val stroke = GestureDescription.StrokeDescription(path, 0, if (long) LONG_PRESS_MS else TAP_MS)
         val gesture = GestureDescription.Builder().addStroke(stroke).setDisplayId(lastDisplayId).build()
         // Wait until the press is over: dispatchGesture returns at once, and the settle that follows
@@ -279,7 +331,10 @@ class AgentService : AccessibilityService(), Device {
         return completed
     }
 
-    override fun back(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
+    // The global back goes to the main display; the virtual display's back goes through the shell server.
+    override fun back(): Boolean =
+        if (display == 0) performGlobalAction(GLOBAL_ACTION_BACK)
+        else runCatching { Shell.server?.key(display, KeyEvent.KEYCODE_BACK) == true }.getOrDefault(false)
 
     override fun awaitSettle(timeoutMs: Long): Boolean {
         val start = nowMs()
@@ -292,18 +347,19 @@ class AgentService : AccessibilityService(), Device {
         return false
     }
 
-    private fun convert(info: AccessibilityNodeInfo, nodes: MutableMap<UiNode, AccessibilityNodeInfo>): UiNode {
+    /** [top]: how far to move the bounds down (see [displayTop]). */
+    private fun convert(info: AccessibilityNodeInfo, nodes: MutableMap<UiNode, AccessibilityNodeInfo>, top: Int): UiNode {
         val rect = Rect().also(info::getBoundsInScreen)
         val node = UiNode(
             text = info.text?.toString(),
             desc = info.contentDescription?.toString(),
             id = info.viewIdResourceName,
             className = info.className?.toString(),
-            bounds = Box(rect.left, rect.top, rect.right, rect.bottom),
+            bounds = Box(rect.left, rect.top + top, rect.right, rect.bottom + top),
             clickable = info.isClickable,
             longClickable = info.isLongClickable,
             scrollable = info.isScrollable,
-            children = (0 until info.childCount).mapNotNull { info.getChild(it) }.map { convert(it, nodes) },
+            children = (0 until info.childCount).mapNotNull { info.getChild(it) }.map { convert(it, nodes, top) },
         )
         nodes[node] = info
         return node

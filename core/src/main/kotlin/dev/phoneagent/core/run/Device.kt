@@ -8,7 +8,8 @@ fun interface Perception {
 /**
  * The phone as the runner sees it. `AgentService` implements it on Android; tests
  * use a scripted fake. Calls may block, so the runner never runs on the UI thread.
- * `displayId` stays 0 in v1 and is the hook for a later virtual-display mode.
+ * The device decides which display a run acts on (0, or background mode's virtual display); `capture()`
+ * reads that one.
  */
 interface Device : Perception {
     override fun capture(displayId: Int): Frame

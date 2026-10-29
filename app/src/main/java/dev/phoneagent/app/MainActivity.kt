@@ -123,9 +123,18 @@ class MainActivity : Activity() {
                 // Back to the user's keyboard whatever happened (a crash is covered on the next service start).
                 if (fast) device.useFastCores(false)
             }
-            // A required app opened on the main display leaves the virtual one: say so instead of "wrong app".
-            val pulled = device.foreground(0).takeIf { display != 0 && result.steps.lastOrNull()?.outcome == Outcome.WRONG_APP && it in pack.requires }
-            val reason = result.reason?.let { if (pulled != null) "$it（$pulled 在主屏打开了，后台任务没法再操作它）" else it }
+            // A required app the user has open on the main display: it left the virtual one (wrong app), or the run
+            // would not start it there (launch failed), as that would take it from the user.
+            val last = result.steps.lastOrNull()
+            val inUse = device.foreground(0).takeIf { display != 0 && it in pack.requires }
+                ?.let { runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)) }.getOrDefault(it) }
+            val reason = result.reason?.let {
+                when {
+                    inUse != null && last?.outcome == Outcome.WRONG_APP -> "$it（$inUse 在主屏打开了，后台任务没法再操作它）"
+                    inUse != null && last?.outcome == Outcome.ACTION_FAILED && last.action == "launch" -> "$it（$inUse 正在主屏使用，后台任务不会把它拉走；离开它后再试）"
+                    else -> it
+                }
+            }
             Log.i(TAG, "${pack.id} 结果：${reason ?: "完成"}")
             device.hideHint()
             // The target app hides this screen, so say why it stopped over it, on the service's overlay

@@ -235,7 +235,7 @@
   - 虚拟屏比主屏矮一个状态栏的高度，坐标统一换算成主屏坐标，任务包不用改。
 
   详见 `docs/virtual-display-experiments.md` 第 4 节。
-- **角色模式**（用户 2026-10-30 定为可选的一档）：Phone Agent 持有 `COMPANION_DEVICE_APP_STREAMING` 角色时，不经过 shell，自己建“可信 + 公共”的虚拟屏、启动 App，无障碍照常可用。角色重启后还在，App 更新后被收回，要用 shell 重新分配一次。三档自动降级：角色模式 → shell 模式 → 前台。实验和源码依据见 `docs/virtual-display-experiments.md` 5.3。
+- **角色模式**（用户 2026-10-30 定为可选的一档）：Phone Agent 持有 `COMPANION_DEVICE_APP_STREAMING` 角色时，不经过 shell，自己建“可信 + 公共”的虚拟屏、启动 App，无障碍照常可用。角色重启后还在，覆盖安装更新后也还在（2026-10-30 实测两次）；丢了要用 shell 重新分配一次。三档自动降级：角色模式 → shell 模式 → 前台。实验和源码依据见 `docs/virtual-display-experiments.md` 5.3。
 - **启动 shell 服务：用 App 内置的启动器**（用户 2026-10-29 选）。原理和 Shizuku 一样，但不用另装 App：
   1. **只做一次**：在开发者选项里打开无线调试，点“使用配对码配对设备”；在 Phone Agent 发的通知里输入 6 位配对码（必须在通知里输：一切换 App，配对窗口就会关掉）。
   2. 用 `NsdManager` 找端口：配对用 `_adb-tls-pairing._tcp`，连接用 `_adb-tls-connect._tcp`，连 `127.0.0.1`。

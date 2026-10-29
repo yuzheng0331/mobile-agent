@@ -245,6 +245,8 @@ class AgentService : AccessibilityService(), Device {
     override fun launch(packageName: String): Boolean {
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
         val display = display
+        // An app is on one display at a time: starting it here would pull it from under the user (MainActivity says why).
+        if (display != 0 && foreground(0) == packageName) return false
         if (display == 0) {
             startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } else if (Background.owns(display)) {
@@ -325,9 +327,14 @@ class AgentService : AccessibilityService(), Device {
         if (info != null && (!info.refresh() || Rect().also(info::getBoundsInScreen) != bounds)) return false
         val node = info?.let { actionable(it, long) }
         if (node?.performAction(action) == true) return true
-        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, if (long) LONG_PRESS_MS else TAP_MS)
-        val gesture = GestureDescription.Builder().addStroke(stroke).setDisplayId(lastDisplayId).build()
+        return gesture(bounds.exactCenterX(), bounds.exactCenterY(), lastDisplayId, if (long) LONG_PRESS_MS else TAP_MS)
+    }
+
+    /** A press at a point of a display, in that display's own coordinates; returns once it is over. */
+    private fun gesture(x: Float, y: Float, displayId: Int, durationMs: Long): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        val gesture = GestureDescription.Builder().addStroke(stroke).setDisplayId(displayId).build()
         // Wait until the press is over: dispatchGesture returns at once, and the settle that follows
         // would otherwise end mid-press, before the long-press menu exists (a wasted ~3 s OCR).
         val done = CountDownLatch(1)
@@ -344,7 +351,8 @@ class AgentService : AccessibilityService(), Device {
     /**
      * The global back goes to the top focused display, which stays the main one (the virtual display may not
      * steal focus), so a virtual display's back is never global: the shell server's key, or else the app's own
-     * back button. Neither: false, and the run stops rather than press back on the user's app.
+     * back button, or in role mode a tap where title bars keep it (WeChat's chat page has no nodes at all).
+     * Whether that changed the screen is the caller's check (the runner compares screenshots).
      */
     override fun back(): Boolean {
         val display = display
@@ -353,7 +361,12 @@ class AgentService : AccessibilityService(), Device {
         val button = windowsOnAllDisplays[display].orEmpty()
             .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
             .firstNotNullOfOrNull { it.root?.let(::backButton) }
-        return button?.let { actionable(it, long = false) }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        if (button?.let { actionable(it, long = false) }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return true
+        // shortcut: one spot for every app (WeChat: arrow at x 0-130, title bar y 0-126 on the virtual display),
+        // per-app spots in the pack if an app puts it elsewhere.
+        if (!Background.owns(display)) return false
+        val dp = resources.displayMetrics.density
+        return gesture(BACK_X_DP * dp, BACK_Y_DP * dp, display, TAP_MS)
     }
 
     private fun backButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -421,6 +434,8 @@ class AgentService : AccessibilityService(), Device {
         private const val USER_CONFIRM_TIMEOUT_MS = 30_000L
         private const val ROLE_HINT_MS = 8_000L
         private val BACK_LABELS = setOf("返回", "Navigate up")
+        private const val BACK_X_DP = 20f
+        private const val BACK_Y_DP = 24f
     }
 }
 

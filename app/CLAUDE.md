@@ -25,10 +25,10 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 ## 后台模式（虚拟屏）
 
 - `shell/ShellServer` 以 shell 身份运行（`app_process` 从已安装的 APK 启动，开发时用 `tools/probe/shell_start.sh`），只做建虚拟屏、在上面启动 App、发返回键三件事，只接受我们 App 的 uid，App 进程一死它就退出：**重装或崩溃后要重新启动它**。
-- 三档，能用哪档用哪档（`Background`）：**角色模式**（持有 `COMPANION_DEVICE_APP_STREAMING` 角色，App 自己建屏、自己启动 App；重启后还在，App 更新或重装后被收回，shell 服务下次连上时自动重新分配）→ **shell 模式** → **前台**（勾了后台运行但两样都没有时，改在主屏跑并说明）。
+- 三档，能用哪档用哪档（`Background`）：**角色模式**（持有 `COMPANION_DEVICE_APP_STREAMING` 角色，App 自己建屏、自己启动 App；重启后还在，覆盖安装更新后也还在（实测两次），丢了的话 shell 服务下次连上时自动重新分配）→ **shell 模式** → **前台**（勾了后台运行但两样都没有时，改在主屏跑并说明）。
 - `AgentService.display` 不为 0 时，读树、截图、手势都在那块屏上；启动和返回走 shell 服务，角色模式下自己启动；“等稳定”只看那块屏的界面事件，toast 不按屏过滤。
-- 虚拟屏上**绝不用全局返回**：它发给顶层焦点屏，而 `STEAL_TOP_FOCUS_DISABLED` 让焦点一直在主屏，会按到用户正在用的 App。角色模式没有返回键：每次任务结束销毁虚拟屏（`Background.release`，上面的 App 页面随之销毁），下次在新屏上从首页开始，不靠返回退回首页（试过 `FLAG_ACTIVITY_CLEAR_TASK`：微信窗口全黑、无障碍看不到）；任务中途的 `back` 只能点界面上文字或描述是“返回”/“Navigate up”的节点，找不到就失败。
-- **已知限制（待做）**：任务包中途写了 `back`、而那一页的界面树是空的（如微信聊天页），角色模式下这一步会失败。要退到按坐标点左上角的返回图标。
+- 虚拟屏上**绝不用全局返回**：它发给顶层焦点屏，而 `STEAL_TOP_FOCUS_DISABLED` 让焦点一直在主屏，会按到用户正在用的 App。角色模式没有返回键：每次任务结束销毁虚拟屏（`Background.release`，上面的 App 页面随之销毁），下次在新屏上从首页开始，不靠返回退回首页（试过 `FLAG_ACTIVITY_CLEAR_TASK`：微信窗口全黑、无障碍看不到）；但用户在主屏用过的 App 会带着停下的页面被拉过来，所以 `back` 先点文字或描述是“返回”/“Navigate up”的节点，找不到就点左上角 (20dp, 24dp)；画面变没变由 runner 比截图判断。返回图标不在那里的 App 以后在任务包里写位置。
+- 目标 App 正在主屏前台时，后台的 `launch` 不启动它（会把它从用户手里拉走），返回 false，`MainActivity` 在停止原因里说明。
 - 虚拟屏没有状态栏：它比主屏矮 `displayTop`（主屏状态栏高度），读到的坐标下移、点击的坐标上移这么多，任务包看到的始终是主屏坐标。
 - 截图回调不能直接持有像素数组（系统会长时间留着回调对象，10 MB 一张的截图会撑爆堆），见 `screenshotOnce`。
 - 后台运行不切加速输入法：用户可能正在主屏打字。

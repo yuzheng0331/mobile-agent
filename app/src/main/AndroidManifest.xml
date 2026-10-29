@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No INTERNET permission yet: nothing connects. When added, it is only for app updates and our own packs; screen content never goes to an outside service. -->
+<!-- No INTERNET permission yet: nothing connects. When added, it is only for app updates, packs, and the own-site APIs a pack declares; screen content never goes out. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Package visibility (Android 11+): only the apps the packs may launch. -->

@@ -24,7 +24,9 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 
 ## 后台模式（虚拟屏）
 
-- `shell/ShellServer` 以 shell 身份运行（`app_process` 从已安装的 APK 启动，开发时用 `tools/probe/shell_start.sh`），只做建虚拟屏、在上面启动 App、发返回键、给 Phone Agent 分配后台角色四件事，只接受我们 App 的 uid，App 进程一死它就退出：**重装或崩溃后要重新启动它**。
+- `shell/ShellServer` 以 shell 身份运行（`app_process` 从已安装的 APK 启动），只做建虚拟屏、在上面启动 App、发返回键、给 Phone Agent 分配后台角色四件事，只接受我们 App 的 uid，App 进程一死它就退出。App 早于拿到 uid 的调用（连上就要角色）会等它拿到再处理。
+- 谁来启动它：`shell/AdbLauncher` 通过本机的无线调试（Kadb 1.3.0 连 127.0.0.1），在无障碍服务连上时和跑后台任务前；配对码从通知输入（`shell/Pairing`）。开发时也可以用 `tools/probe/shell_start.sh`。Kadb 的 GPL 依赖 spake2-java 已排除，同名的 `com.flyfish233.crypto.spake2.Spake2Context` 转到 `core/adb/Spake2`：升级 Kadb 时先用 `javap` 核对它引用的签名没变。
+- adb 密钥和证书在 `filesDir/adb/`：拿到它们就能拿到这台手机的 shell，不能写日志、不能导出。
 - 三档，能用哪档用哪档（`Background`）：**角色模式**（持有 `COMPANION_DEVICE_APP_STREAMING` 角色，App 自己建屏、自己启动 App；重启后还在，覆盖安装更新后也还在（实测两次），丢了的话 shell 服务下次连上时自动重新分配）→ **shell 模式** → **前台**（勾了后台运行但两样都没有时，改在主屏跑并说明）。
 - `AgentService.display` 不为 0 时，读树、截图、手势都在那块屏上；启动和返回走 shell 服务，角色模式下自己启动；“等稳定”只看那块屏的界面事件，toast 不按屏过滤。
 - 虚拟屏上**绝不用全局返回**：它发给顶层焦点屏，而 `STEAL_TOP_FOCUS_DISABLED` 让焦点一直在主屏，会按到用户正在用的 App。角色模式没有返回键：每次任务结束销毁虚拟屏（`Background.release`，上面的 App 页面随之销毁），下次在新屏上从首页开始，不靠返回退回首页（试过 `FLAG_ACTIVITY_CLEAR_TASK`：微信窗口全黑、无障碍看不到）；但用户在主屏用过的 App 会带着停下的页面被拉过来，所以 `back` 先点文字或描述是“返回”/“Navigate up”的节点，找不到就点左上角 (20dp, 24dp)；画面变没变由 runner 比截图判断。返回图标不在那里的 App 以后在任务包里写位置。
@@ -35,7 +37,7 @@ Android 外壳：`AgentService`（无障碍服务，实现 `core.run.Device`）�
 
 ## 不能动的
 
-- 不靠云端：自己的联网只有 App 更新、拉任务包、调任务包声明过的自有网站接口，代码集中在一处；界面树、截图、OCR 文字不交给任何外部服务。目前没有联网功能，manifest 也没有 `INTERNET` 权限，等第一个联网功能时再加。
+- 不靠云端：自己的联网只有 App 更新、拉任务包、调任务包声明过的自有网站接口，以及启动器连本机 adbd（127.0.0.1），代码集中在一处；界面树、截图、OCR 文字不交给任何外部服务。`INTERNET` 权限目前只为启动器而加。
 - `<queries>` 只列任务包会启动的 App；加任务包时一起加。
 - 调试入口（广播接收器、电脑命令）只能进 debug 构建。
 - 界面树、截图不写日志、不落盘。

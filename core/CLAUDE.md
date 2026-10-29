@@ -9,6 +9,7 @@
 - `route/`：一句话 → 任务包。
 - `ext/`：扩展点注册表（`Registry`）和 v1 内置实现（`Builtins`；微信截图的版面规则在 `ChatLayout`）。
 - `ocr/`：PP-OCR 引擎（`PpOcr`，实现 `run.TextRecognizer`）：检测框提取和 CTC 解码；推理经 `OcrModels` 接口，`OrtModels` 是 onnxruntime 实现（`app` 里识别用 LiteRT 的 `LiteRtModels`）。`OcrScore` 判分，电脑和手机共用。
+- `adb/`：无线调试配对用的 SPAKE2（`Spake2`，照 BoringSSL 的 spake25519 逐字节对齐），给 `app` 的启动器顶替 Kadb 的 GPL 依赖。不依赖其他子包。
 
 依赖方向：`route` 只依赖 `pack`；`ocr` 只依赖 `run`；`run.Frame`、`run.Device` 不依赖其他子包。`Runner`、`Validator` 和 `ext` 之间互相引用是有意的（注册表要知道 `Step`、`Device`，解释器和校验要用注册表），不要再加新的环。
 

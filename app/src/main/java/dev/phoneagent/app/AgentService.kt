@@ -32,6 +32,7 @@ import dev.phoneagent.core.ocr.PpOcr
 import dev.phoneagent.core.run.Pixels
 import dev.phoneagent.core.run.TextRecognizer
 import dev.phoneagent.core.run.UiNode
+import dev.phoneagent.app.shell.AdbLauncher
 import dev.phoneagent.app.shell.Shell
 import java.util.IdentityHashMap
 import java.util.concurrent.CountDownLatch
@@ -105,11 +106,14 @@ class AgentService : AccessibilityService(), Device {
         instance = this
         // A run cut short (crash, killed) may have left our input method selected: give the keyboard back.
         useFastCores(false)
-        // Also runs after an update, which takes the role away: say how to get it back (the shell server restores it).
-        if (Background.wanted(this) && Background.lostRole(this) && !Background.restoreRole(this)) {
-            showHint("Phone Agent：更新后后台运行的授权没了，启动一次 shell 服务就会自动恢复；在这之前后台任务用 shell 服务，没有就在前台跑")
-            mainHandler.postDelayed({ hideHint() }, ROLE_HINT_MS)
-        }
+        // At boot and after an update. Without the role, start the shell server over wireless debugging: it gives
+        // the role back as it attaches. If that can't happen now (no Wi-Fi, not paired), a lost role is worth a word.
+        if (Background.wanted(this) && !Background.hasRole(this)) Thread {
+            if (!AdbLauncher.start(this) && Background.lostRole(this)) {
+                showHint("Phone Agent：后台运行的授权没了（${AdbLauncher.problem}）。解决后再跑后台任务会自动恢复，在这之前任务在前台跑")
+                mainHandler.postDelayed({ hideHint() }, ROLE_HINT_MS)
+            }
+        }.start()
     }
 
     /**

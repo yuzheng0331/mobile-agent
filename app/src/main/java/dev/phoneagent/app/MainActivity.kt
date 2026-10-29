@@ -1,6 +1,8 @@
 package dev.phoneagent.app
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -13,6 +15,8 @@ import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import dev.phoneagent.app.shell.AdbLauncher
+import dev.phoneagent.app.shell.Pairing
 import dev.phoneagent.app.shell.Shell
 import dev.phoneagent.core.pack.Pack
 import dev.phoneagent.core.pack.Packs
@@ -50,6 +54,17 @@ class MainActivity : Activity() {
                 text = "打开无障碍设置"
                 setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             })
+            // Once, for background runs without a computer: the code goes in through a notification (Pairing).
+            addView(Button(context).apply {
+                text = "配对无线调试（后台运行用，只需一次）"
+                setOnClickListener {
+                    if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+                    }
+                    Pairing.show(context)
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                }
+            })
             // Optional: OCR tasks run ~30% faster with our (keyboard-less) input method enabled.
             addView(Button(context).apply {
                 text = "启用加速（在输入法列表里打开 Phone Agent 加速）"
@@ -73,8 +88,8 @@ class MainActivity : Activity() {
         inBackground.text = "后台运行（在虚拟屏上跑，你可以照常用手机）" + when {
             Background.hasRole(this) -> ""
             Shell.server != null -> "：shell 模式"
-            Background.lostRole(this) -> "：更新后授权没了，启动一次 shell 服务就会恢复"
-            else -> "：未授权，启动 shell 服务后自动授权"
+            Background.lostRole(this) -> "：授权没了，连着 Wi-Fi 跑一次后台任务就会恢复"
+            else -> "：未授权，先配对无线调试"
         }
     }
 
@@ -83,17 +98,19 @@ class MainActivity : Activity() {
         // The virtual display gets no status bar: make it that much shorter, so apps lay out as on the main display.
         val metrics = windowManager.maximumWindowMetrics
         val statusBar = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
-        // Neither role nor shell server: run on the main display rather than not at all.
-        val display = if (!inBackground.isChecked) 0 else {
-            Background.display(this, metrics.bounds.width(), metrics.bounds.height() - statusBar, resources.displayMetrics.densityDpi) ?: 0
-        }
-        val fallback = inBackground.isChecked && display == 0
+        val background = inBackground.isChecked
+        val app = applicationContext
+        val dpi = resources.displayMetrics.densityDpi
         status.text = "运行中：${pack.id}"
         val ocr = "ocr" in pack.needs
         device.useOcr(ocr)
         worker.execute {
+            // No role and no shell server: start one over wireless debugging (it also gives the role back).
+            if (background && !Background.hasRole(app) && Shell.server == null) AdbLauncher.start(app)
+            // Neither role nor shell server: run on the main display rather than not at all.
+            val display = if (!background) 0 else Background.display(app, metrics.bounds.width(), metrics.bounds.height() - statusBar, dpi) ?: 0
             val lines = mutableListOf<String>()
-            if (fallback) lines += "后台运行不可用（没有授权，也没有 shell 服务），改在前台跑"
+            if (background && display == 0) lines += "后台运行不可用（${AdbLauncher.problem ?: "没有授权，也没有 shell 服务"}），改在前台跑"
             // In the background the user may be typing: never take their keyboard away.
             val fast = ocr && display == 0 && device.useFastCores(true)
             if (ocr && !fast) lines += if (display != 0) "后台运行：OCR 只能用部分 CPU 核" else "未启用加速：OCR 只能用部分 CPU 核，会慢约 30%"

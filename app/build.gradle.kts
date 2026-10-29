@@ -27,6 +27,9 @@ android {
     // IShell: the background mode's shell server (ShellServer) and the app talk over it.
     buildFeatures { aidl = true }
 
+    // BouncyCastle's jars (Kadb) each carry these manifests.
+    packaging { resources.excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF" }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -45,6 +48,12 @@ dependencies {
     // AI-pack delivery (WorkManager, boot receivers): the models are plain assets.
     implementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
     implementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
+    // Background mode's launcher talks to this phone's own adbd over wireless debugging (AdbLauncher).
+    // Without Kadb's SPAKE2 dependency (GPL-3.0, JitPack only): core.adb.Spake2 stands in for it
+    // (com.flyfish233.crypto.spake2.Spake2Context). 1.3.0: later versions need compileSdk 36–37.
+    implementation("com.flyfishxu:kadb-android:1.3.0") { exclude(group = "com.github.Flyfish233", module = "spake2-java") }
+    // Kadb.pair is a suspend function; Kadb brings this at runtime already.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 }
 
 // PP-OCRv6 small (Apache-2.0) from PaddlePaddle's Hugging Face repos, pinned to a revision and

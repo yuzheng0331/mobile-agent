@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No INTERNET permission yet: nothing connects. When added, it is only for app updates, packs, and the own-site APIs a pack declares; screen content never goes out. -->
+<!-- INTERNET: only the launcher's connection to this phone's own adbd so far. Later also app updates, packs and the own-site APIs a pack declares; screen content never goes out. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Background role mode (Background): granted only while we hold the app streaming role. -->
     <uses-permission android:name="android.permission.ADD_TRUSTED_DISPLAY" />
     <uses-permission android:name="android.permission.ADD_ALWAYS_UNLOCKED_DISPLAY" />
+    <!-- Background mode's launcher (shell.AdbLauncher): this phone's own adbd on 127.0.0.1, found over mDNS.
+         Nothing else connects (invariant: no cloud). WRITE_SECURE_SETTINGS is granted over adb at the first
+         connection, to turn wireless debugging on and off; notifications take the pairing code. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Package visibility (Android 11+): only the apps the packs may launch. -->
     <queries>
@@ -47,6 +54,11 @@
             android:name=".shell.ShellProvider"
             android:authorities="dev.phoneagent.app.shell"
             android:exported="true" />
+
+        <!-- The pairing code typed into our notification (shell.Pairing). -->
+        <receiver
+            android:name=".shell.PairingReceiver"
+            android:exported="false" />
 
         <!-- No keyboard, never types: selected during OCR runs only, for all CPU cores (AgentIme). -->
         <service

@@ -34,6 +34,7 @@ object ShellServer {
         val server = Server()
         val reply = attach(server)
         server.appUid = reply.getInt(ShellProvider.UID)
+        server.attached.countDown()
         reply.getBinder(ShellProvider.APP)!!.linkToDeath({ exitProcess(0) }, 0)
         println("Phone Agent shell server attached to uid ${server.appUid}")
         Looper.loop()
@@ -61,6 +62,9 @@ object ShellServer {
 
     private class Server : IShell.Stub() {
         @Volatile var appUid = -1
+        // The app may call as soon as it has our binder (it asks for the role right away), before attach has
+        // returned its uid to us: such a call waits for it instead of being refused.
+        val attached = java.util.concurrent.CountDownLatch(1)
         private val main = Handler(Looper.getMainLooper())
         private val displays = HashMap<Int, Pair<ImageReader, Any>>()
 
@@ -71,6 +75,7 @@ object ShellServer {
         }
 
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            attached.await(ATTACH_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)
             if (Binder.getCallingUid() != appUid) throw SecurityException("only Phone Agent may use its shell server")
             return super.onTransact(code, data, reply, flags)
         }
@@ -138,6 +143,7 @@ object ShellServer {
     }
 
     private const val SHELL_PACKAGE = "com.android.shell"
+    private const val ATTACH_WAIT_S = 5L
     private const val PACKAGE = "dev.phoneagent.app"
     private val COMPONENT = Regex("[\\w.]+/[\\w.$]+")
 

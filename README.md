@@ -80,4 +80,4 @@ M2（夸克任务）：任务包已写好、各起点单次通过，弹窗提示
 
 M3（微信任务）：功能都已实现，前台、后台都跑通过，20 次连续验收没做（架构文档第 9 节“M3 状态”）。
 
-之后：App 被拉回主屏时的暂停和续跑，以及下一阶段的其他需求，优先级见 [docs/research/next-phase-design-review.md](docs/research/next-phase-design-review.md) 第 9 节。
+之后：下一阶段先做网站接口（任务包的接口层、`http` 动作、变量和循环）和管理员证书，再做画面识别和续跑等，优先级见 [docs/research/next-phase-design-review.md](docs/research/next-phase-design-review.md) 第 9 节。

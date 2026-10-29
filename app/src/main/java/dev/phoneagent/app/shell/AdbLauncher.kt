@@ -36,6 +36,7 @@ object AdbLauncher {
     private const val FIND_MS = 8_000L
     private const val ATTACH_MS = 5_000L
     private const val MORE_MS = 1_000L
+    private const val CONNECT_MS = 15_000L
 
     /** Why the last [start] or [pair] failed, for the user; null after a success. */
     @Volatile var problem: String? = null
@@ -68,21 +69,7 @@ object AdbLauncher {
         }
         try {
             identity(context)
-            val ports = find(context, CONNECT)
-            if (ports.isEmpty()) return@attempt fail("没找到无线调试的连接端口")
-            // mDNS can still list a port adbd has left (seen: a stale one refused): take the first that answers.
-            var error: Exception? = null
-            val connected = ports.firstNotNullOfOrNull { port ->
-                val adb = Kadb.create("127.0.0.1", port)
-                try {
-                    adb.shell("true")
-                    adb
-                } catch (e: Exception) {
-                    error = e
-                    adb.close()
-                    null
-                }
-            } ?: return@attempt fail("连不上无线调试（还没配对？）：$error")
+            val connected = connect(context) ?: return@attempt false
             connected.use { adb ->
                 if (!canWriteSettings(context)) {
                     adb.shell("pm grant ${context.packageName} ${Manifest.permission.WRITE_SECURE_SETTINGS}")
@@ -97,12 +84,41 @@ object AdbLauncher {
             Log.i("PhoneAgent", "后台模式：shell 服务已由无线调试启动")
             true
         } catch (e: Exception) {
-            // Typically not paired yet: adbd refuses our key.
-            fail("连不上无线调试（还没配对？）：$e")
+            fail("通过无线调试启动失败：$e")
         } finally {
             // The server outlives wireless debugging, so leave it as the user had it.
             if (!wasOn) runCatching { Settings.Global.putInt(resolver, ADB_WIFI, 0) }
         }
+    }
+
+    /**
+     * This phone's adbd, connected. mDNS can still list ports adbd has left, and right after wireless debugging is
+     * turned on its new port shows up only seconds later (seen: just a stale one, refused, at first). So refused
+     * ports are skipped and the search goes on until [CONNECT_MS]; adbd refusing our certificate means not paired.
+     */
+    private fun connect(context: Context): Kadb? {
+        val deadline = SystemClock.uptimeMillis() + CONNECT_MS
+        val tried = mutableSetOf<Int>()
+        var refused: Exception? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            for (port in find(context, CONNECT) - tried) {
+                tried += port
+                val adb = Kadb.create("127.0.0.1", port)
+                try {
+                    adb.shell("true")
+                    return adb
+                } catch (e: javax.net.ssl.SSLException) {
+                    adb.close()
+                    fail("无线调试拒绝了 Phone Agent（还没配对，或者配对被撤销了）：$e")
+                    return null
+                } catch (e: Exception) {
+                    adb.close()
+                    refused = e
+                }
+            }
+        }
+        fail(if (tried.isEmpty()) "没找到无线调试的连接端口" else "无线调试的连接端口一直没就绪：$refused")
+        return null
     }
 
     private inline fun attempt(block: () -> Boolean): Boolean = block().also { if (it) problem = null }

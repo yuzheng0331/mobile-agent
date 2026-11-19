@@ -14,3 +14,5 @@ app/src/main/assets/ocr/*.onnx
 app/src/debug/assets/ocr/*.onnx
 # made from them by tools/probe/ocr_litert_assets.sh
 app/src/main/assets/ocr/litert/
+# local replica of the live site (real domain, schema, cloud-function shape): never pushed
+tools/site-replica/

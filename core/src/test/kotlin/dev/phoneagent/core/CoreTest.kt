@@ -27,7 +27,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Scripted phone: each action moves to the next frame; settling advances the clock. */
-private class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: Boolean = true) : Device {
+class FakeDevice(vararg frames: Frame, private val actionsChangeScreen: Boolean = true) : Device {
     private val frames = frames.toList()
     private var current = 0
     private var now = 0L
@@ -67,13 +67,13 @@ private fun row(top: Int, label: String) = UiNode(
 
 private fun frame(pkg: String, vararg nodes: UiNode) = Frame(pkg, UiNode(children = nodes.toList()))
 
-private val QQ = "com.tencent.mobileqq"
+val QQ = "com.tencent.mobileqq"
 // As on a real QQ with few chats: the list fits one screen (not scrollable), sits inside a same-size
 // page RecyclerView, and its first row is the search bar.
 private const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
 // As on real QQ: a chat row's description can contain "消息" ("…3条新消息"); the tab's text is exactly "消息".
 private val qqTab = Box(0, 2300, 270, 2400)
-private val qqList = frame(QQ, UiNode(desc = "群聊，3条新消息", clickable = true, bounds = Box(0, 374, 1080, 568)),
+val qqList = frame(QQ, UiNode(desc = "群聊，3条新消息", clickable = true, bounds = Box(0, 374, 1080, 568)),
     UiNode(text = "消息", clickable = true, bounds = qqTab), UiNode(text = "联系人", clickable = true),
 
     UiNode(className = RECYCLER, bounds = Box(0, 0, 1080, 2400), children = listOf(UiNode(children = listOf(

@@ -7,22 +7,14 @@
 ## 结构
 
 ```
-core/    纯 Kotlin，可在电脑上测试
-  pack/Pack.kt       任务包格式（严格解析，不认识的字段直接报错）
-  pack/Validator.kt  加载时校验：未知名字、参数格式、launch 了 requires 以外的 App
-  run/Frame.kt       一轮感知的结果：界面树 + 按需、按区域缓存的 OCR；各层往同一帧里追加
-  run/Device.kt      执行器眼中的手机（截取、启动、点/长按、返回、等稳定）；displayId 留给以后的虚拟屏
-  run/Runner.kt      逐步执行：找 → 动 → 等稳定 → 查预期；输出不含界面内容的轨迹
-  route/Router.kt    一句话 → 任务包（按别名匹配，匹配不唯一就不猜）
-  ext/Registry.kt    扩展点：找法、预期、动作，都按名字注册
-  ext/Builtins.kt    v1 内置：text / desc / id / listItem / lastMessage / ocrText / lastBubble / chatRow；anyText / gone / toast；launch / tap / long / back
-  ocr/PpOcr.kt       PP-OCR 引擎（检测框、解码；推理后端可换），ocr/OcrScore.kt 判分
-app/     Android：AgentService（无障碍服务，实现 Device）、MainActivity（任务列表）、LiteRtModels（GPU 识别）、
-         AgentIme（加速输入法）、Background 和 shell/（后台模式）
-packs/   官方任务包 JSON，构建时打进 App 的 assets
-tools/probe/  电脑端工具：抓界面树和截图、OCR 标注与模型转换、虚拟屏实验、启动 shell 服务，见其 README
-docs/    架构文档、OCR 实验记录、虚拟屏实验记录、调研（BetterGI / OneDragon / 下一阶段设计评审）
+core/    纯 Kotlin，可在电脑上测试：pack（格式与校验）、run（解释器）、ext（扩展点）、ocr、route、adb
+app/     Android：AgentService、MainActivity、LiteRtModels、AgentIme、Background 与 shell/
+packs/   官方任务包 JSON，构建时打进 assets
+tools/   probe（抓帧 / OCR 标注 / 虚拟屏实验）、site-replica（网站接口本机副本）
+docs/    设计、状态、决定记录、实验记录、调研——每份是干嘛的见 [docs/INDEX.md](docs/INDEX.md)
 ```
+
+每个文件、每个包的职责见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 3 节。
 
 ## 构建
 
@@ -61,23 +53,14 @@ docs/    架构文档、OCR 实验记录、虚拟屏实验记录、调研（Bett
 
 - **加一个任务**：先按架构文档第 8 节在真机上 probe 所有起点和分支，再写任务包；在 `packs/` 放 JSON，`core` 的测试会自动校验它（`shipped packs validate`）。字段见 `Pack.kt` 和 `packs/qq-latest-to-douyin.json`。
 - **加一种找法或预期**：实现 `Finder` / `Expectation`，在 `Builtins.registry` 里按名字注册，并加测试。
-- **加一种动作**（滚动、左右滑等）：同上，但要先过安全评审——动作集里不放输入和发送。
+- **加一种动作**（滚动、滑动、输入等）：同上，在 `Builtins.registry` 里注册并加测试。
 - **OCR**：引擎在 `core/ocr/PpOcr.kt`，模型的下载和生成见 `app/CLAUDE.md`，实验数据和重跑方法见 [docs/ocr-experiments.md](docs/ocr-experiments.md)。
 
 ## 不变量
 
-- 不靠云端：感知和决策都在本机完成，不用大模型 API、云 OCR、云手机或云电脑，界面树、截图、OCR 文字不交给任何外部服务。Phone Agent 自己联网只做这些：App 更新、拉取任务包、调用任务包声明过的自有网站接口（界面上读到的内容不能填进这些请求），以及后台模式的启动器连这台手机自己的 adbd（127.0.0.1，不出手机）。任务包由项目所有者或经其签发证书的管理员分发，并验签。被操作的 App 或网站自己发出的数据（登录、上传图片等）是它们的事，不归这条管。
-- 只操作任务包 `requires` 里的 App；前台换成别的 App 就停下（`Outcome.WRONG_APP`）。
-- 界面树、截图、OCR 文字只在内存里，一轮结束就丢；轨迹只有结构和耗时。
-- 动作集不含发送；新增动作（包括文字输入）要先过安全评审。
-- 任务包只是数据：只能引用 `Builtins.registry` 里按名字注册的找法、预期和动作，未知名字由 `validate` 拒收；不做运行时代码插件和脚本引擎：变量单次赋值，表达式只用非图灵完备的固定子集，界面上读到的值不能进网络请求。
+见 [CLAUDE.md](CLAUDE.md) §不变量。那份是唯一权威，改动只在那里做。
 
 ## 下一步
 
-M1（QQ 任务）按用户决定例外放行：最后一轮 24 次里 21 次结果正确（87.5%，标准 ≥ 95%），遗留项见架构文档第 9 节“M1 状态”。`Perception` 接口和 `Frame.id` 推到 M3（微信 OCR）。
+见 [docs/STATE.md](docs/STATE.md)。
 
-M2（夸克任务）：任务包已写好、各起点单次通过，弹窗提示和多层返回已真机验证，20 次连续验收暂时搁置；用户要先把网站添加到夸克首页并命名为“书签”（见架构文档第 9 节“M2 状态”）。
-
-M3（微信任务）：功能都已实现，前台、后台都跑通过，20 次连续验收没做（架构文档第 9 节“M3 状态”）。
-
-之后：下一阶段先做网站接口（任务包的接口层、`http` 动作、变量和循环）和管理员证书，再做画面识别和续跑等，优先级见 [docs/research/next-phase-design-review.md](docs/research/next-phase-design-review.md) 第 9 节。

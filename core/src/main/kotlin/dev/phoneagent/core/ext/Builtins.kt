@@ -1,5 +1,6 @@
 package dev.phoneagent.core.ext
 
+import dev.phoneagent.core.pack.Step
 import dev.phoneagent.core.run.Box
 import dev.phoneagent.core.run.Frame
 import dev.phoneagent.core.run.Target
@@ -51,7 +52,8 @@ object Builtins {
             "long" to Action(needsTarget = true) { device, _, target -> device.press(target!!, long = true) },
             "back" to Action(needsTarget = false) { device, _, _ -> device.back() },
         ),
-        capabilities = setOf("ocr"),
+        // http: site calls (`do: "http"`), run by the Runner through its Http; see the security review in next-phase-design-review 2.3.
+        capabilities = setOf("ocr", "http"),
     )
 
     /**

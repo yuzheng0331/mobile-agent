@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./docs/research/**)",
+      "Read(./docs/DECISIONS.md)",
+      "Read(./docs/CONDUCTOR.md)"
+    ]
+  }
+}

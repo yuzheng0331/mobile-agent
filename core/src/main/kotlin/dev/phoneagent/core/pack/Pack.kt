@@ -3,9 +3,10 @@ package dev.phoneagent.core.pack
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
-/** A task pack. Packs are data only: they can name registered finders, expectations and actions, nothing else. */
+/** A task pack. Packs are data only: they can name registered finders, expectations and actions, and their own site's operations, nothing else. */
 @Serializable
 data class Pack(
     val schemaVersion: Int,
@@ -16,18 +17,37 @@ data class Pack(
     val requires: List<String> = emptyList(),
     val needs: List<String> = emptyList(),
     val testedWith: Map<String, String> = emptyMap(),
+    val site: Site? = null,
     val steps: List<Step>,
 )
 
+/**
+ * One step, exactly one of: `do` (an action; `http` calls a site operation), `let` (new variables),
+ * `when` (run `then` if true), `forEach` (run `body` once per item). A failed step stops the run, or with
+ * `"onStuck": "skip"` is skipped and reported; a skipped `forEach` round goes on to the next.
+ */
 @Serializable
 data class Step(
-    @SerialName("do") val action: String,
+    val id: String? = null,
+    @SerialName("do") val action: String? = null,
     val app: String? = null,
     val target: TargetSpec? = null,
     val expect: JsonObject? = null,
     val ifMissing: String? = null,
     val timeoutMs: Long = 5_000,
     val maxRetry: Int = 1,
+    val onStuck: String = "stop",
+    val call: String? = null,
+    val with: Map<String, JsonElement> = emptyMap(),
+    val save: String? = null,
+    val let: Map<String, String>? = null,
+    @SerialName("when") val cond: String? = null,
+    val then: List<Step>? = null,
+    val forEach: String? = null,
+    @SerialName("as") val item: String? = null,
+    val key: String? = null,
+    val max: Int? = null,
+    val body: List<Step>? = null,
 )
 
 /** `find` entries are tried in order, cheapest first; each is `{"<finder>": arg, ...options}`. */
